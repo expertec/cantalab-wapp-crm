@@ -1,8 +1,9 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+// whatsappService.js
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode-terminal');
 const Pino = require('pino');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
@@ -20,11 +21,14 @@ async function connectToWhatsApp() {
     } else {
       console.log("Carpeta de autenticación existente:", localAuthFolder);
     }
+
     console.log("Obteniendo estado de autenticación...");
     const { state, saveCreds } = await useMultiFileAuthState(localAuthFolder);
+
     console.log("Obteniendo la última versión de Baileys...");
     const { version } = await fetchLatestBaileysVersion();
     console.log("Versión obtenida:", version);
+
     console.log("Intentando conectar con WhatsApp...");
     const sock = makeWASocket({
       auth: state,
@@ -32,7 +36,9 @@ async function connectToWhatsApp() {
       printQRInTerminal: true,
       version,
     });
+
     whatsappSock = sock;
+
     sock.ev.on('connection.update', (update) => {
       console.log("connection.update:", update);
       const { connection, lastDisconnect, qr } = update;
@@ -57,10 +63,12 @@ async function connectToWhatsApp() {
         }
       }
     });
+
     sock.ev.on('creds.update', (creds) => {
       console.log("Credenciales actualizadas:", creds);
       saveCreds();
     });
+
     console.log("Conexión de WhatsApp establecida, retornando socket.");
     return sock;
   } catch (error) {
@@ -81,9 +89,4 @@ function getWhatsAppSock() {
   return whatsappSock;
 }
 
-module.exports = {
-  connectToWhatsApp,
-  getLatestQR,
-  getConnectionStatus,
-  getWhatsAppSock
-};
+module.exports = { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock };

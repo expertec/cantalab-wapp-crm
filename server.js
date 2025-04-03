@@ -1,33 +1,47 @@
+// server.js
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
-const dotenv = require('dotenv');
-const cron = require('node-cron');
-
-dotenv.config();
-
-// Importar Firebase Admin
-const { db } = require('./firebaseAdmin');
-
-// Importar integración con WhatsApp y funciones para PDF y estrategia
-const { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } = require('./whatsappService');
-const { generarEstrategia } = require('./chatGpt');
-
-// Importar función para generar PDF (asegúrate de tenerla en la ruta indicada)
-const { generatePDF } = require('./utils/generatePDF');
 
 const app = express();
 const port = process.env.PORT || 3001;
 
+// 1. Definir la ruta al archivo secreto montado por Render
+const firebaseKeyPath = path.join('/etc/secrets', 'serviceAccountKey.json');
+
+// 2. Verificar que el archivo exista
+if (!fs.existsSync(firebaseKeyPath)) {
+  console.error("No se encontró el archivo de llave de Firebase en /etc/secrets/serviceAccountKey.json");
+  process.exit(1); // Sale del proceso para evitar errores posteriores
+}
+
+// 3. Leer y parsear el archivo JSON
+let firebaseServiceAccount;
+try {
+  const fileData = fs.readFileSync(firebaseKeyPath, 'utf8');
+  firebaseServiceAccount = JSON.parse(fileData);
+} catch (error) {
+  console.error("Error leyendo o parseando el archivo de llave de Firebase:", error);
+  process.exit(1);
+}
+
+// 4. Inicializar Firebase Admin con la configuración
+const { db } = require('./firebaseAdmin');
+
+
+// Importa la integración con WhatsApp
+const { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } = require('./whatsappService');
+
+// Importa el scheduler (esto iniciará las tareas programadas)
+require('./scheduler');
+
 app.use(cors());
 app.use(bodyParser.json());
 
-// Endpoint de depuración para verificar el archivo secreto de Firebase
+// Endpoint de depuración para revisar si el archivo secreto se leyó correctamente
 app.get('/api/debug-env', (req, res) => {
-  const firebaseKeyPath = path.join('/etc/secrets', 'serviceAccountKey.json');
   const exists = fs.existsSync(firebaseKeyPath);
   res.json({
     archivoSecreto: exists ? "Archivo de llave de Firebase OK" : "No se encontró el archivo secreto",
@@ -35,7 +49,40 @@ app.get('/api/debug-env', (req, res) => {
   });
 });
 
-// Endpoint para consultar el estado de WhatsApp (QR y conexión)
+// Endpoint para recibir leads (datos del formulario)
+app.post('/api/leads', async (req, res) => {
+  try {
+    const { nombre, negocio, telefono } = req.body;
+    if (!nombre || !negocio || !telefono) {
+      return res.status(400).json({ error: 'Faltan datos requeridos.' });
+    }
+    const nuevoLead = {
+      nombre,
+      negocio,
+      telefono,
+      estado: 'nuevo', // Marca el lead como nuevo para que el scheduler lo procese
+      fecha_creacion: new Date()
+    };
+
+    const docRef = await db.collection('leads').add(nuevoLead);
+    res.json({ message: 'Lead guardado correctamente', id: docRef.id });
+  } catch (error) {
+    console.error("Error al guardar el lead:", error);
+    res.status(500).json({ error: 'Error interno al guardar el lead.' });
+  }
+});
+
+// Endpoint para iniciar la conexión manualmente (por si se requiere)
+app.get('/api/whatsapp/connect', async (req, res) => {
+  try {
+    await connectToWhatsApp();
+    res.json({ status: 'Conectado', message: 'Conexión iniciada. Espera el QR si aún no estás conectado.' });
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: 'Error al conectar con WhatsApp.' });
+  }
+});
+
+// Endpoint para consultar el estado actual (QR y conexión)
 app.get('/api/whatsapp/status', (req, res) => {
   res.json({
     status: getConnectionStatus(),
@@ -43,189 +90,91 @@ app.get('/api/whatsapp/status', (req, res) => {
   });
 });
 
-// Endpoint para iniciar la conexión con WhatsApp
-app.get('/api/whatsapp/connect', async (req, res) => {
+// Endpoint para enviar mensaje de texto
+app.get('/api/whatsapp/send/text', async (req, res) => {
+  let phone = req.query.phone;
+  if (!phone) {
+    return res.status(400).json({ status: 'error', message: 'Número de teléfono requerido.' });
+  }
+  
+  // Si el número no comienza con "521", lo concatenamos
+  if (!phone.startsWith('521')) {
+    phone = `521${phone}`;
+  }
+  
+  const sock = getWhatsAppSock();
+  if (!sock) {
+    return res.status(500).json({ status: 'error', message: 'No hay conexión activa con WhatsApp.' });
+  }
+  
   try {
-    await connectToWhatsApp();
-    res.json({
-      status: "Conectado",
-      message: "Conexión iniciada. Espera el QR si aún no estás conectado."
-    });
+    const jid = `${phone}@s.whatsapp.net`;
+    await sock.sendMessage(jid, { text: 'Mensaje de prueba desde WhatsApp API' });
+    res.json({ status: 'ok', message: 'Mensaje de texto enviado.' });
   } catch (error) {
-    console.error("Error al conectar con WhatsApp:", error);
-    res.status(500).json({
-      status: "Error",
-      message: "Error al conectar con WhatsApp."
-    });
+    console.error('Error enviando mensaje de texto:', error);
+    res.status(500).json({ status: 'error', message: 'Error al enviar mensaje de texto.' });
   }
 });
 
-/**
- * Función para enviar mensajes según el tipo.
- * Se ha incluido el caso "pdfChatGPT" que genera, guarda y envía el PDF.
- */
-async function enviarMensaje(lead, mensaje) {
+// Endpoint para enviar mensaje de imagen con URL de Firebase
+app.get('/api/whatsapp/send/image', async (req, res) => {
+  let phone = req.query.phone;
+  if (!phone) return res.status(400).json({ status: 'error', message: 'Número de teléfono requerido.' });
+  
+  if (!phone.startsWith('521')) {
+    phone = `521${phone}`;
+  }
+  
+  const sock = getWhatsAppSock();
+  if (!sock) {
+    return res.status(500).json({ status: 'error', message: 'No hay conexión activa con WhatsApp.' });
+  }
+  
   try {
-    const sock = getWhatsAppSock();
-    if (!sock) {
-      console.error("No hay conexión activa con WhatsApp.");
-      return;
-    }
-    let phone = lead.telefono;
-    if (!phone.startsWith('521')) {
-      phone = `521${phone}`;
-    }
     const jid = `${phone}@s.whatsapp.net`;
-    const contenidoFinal = mensaje.contenido; // Asumimos que aquí ya se han aplicado los placeholders
-
-    if (mensaje.type === "texto") {
-      await sock.sendMessage(jid, { text: contenidoFinal });
-    } else if (mensaje.type === "audio") {
-      try {
-        console.log(`Descargando audio desde: ${contenidoFinal} para el lead ${lead.id}`);
-        const response = await axios.get(contenidoFinal, { responseType: 'arraybuffer' });
-        const audioBuffer = Buffer.from(response.data, 'binary');
-        console.log(`Audio descargado. Tamaño: ${audioBuffer.length} bytes para el lead ${lead.id}`);
-        if (audioBuffer.length === 0) {
-          console.error(`Error: El archivo descargado está vacío para el lead ${lead.id}`);
-          return;
-        }
-        const audioMsg = {
-          audio: audioBuffer,
-          mimetype: 'audio/mp4',
-          fileName: 'output.m4a',
-          ptt: true
-        };
-        await sock.sendMessage(jid, audioMsg);
-      } catch (err) {
-        console.error("Error al descargar o enviar audio:", err);
-      }
-    } else if (mensaje.type === "imagen") {
-      await sock.sendMessage(jid, { image: { url: contenidoFinal } });
-    } else if (mensaje.type === "pdfChatGPT") {
-      await procesarMensajePDFChatGPT(lead);
-    }
-    console.log(`Mensaje de tipo "${mensaje.type}" enviado a ${lead.telefono}`);
+    // URL de la imagen en Firebase
+    const imageUrl = 'https://firebasestorage.googleapis.com/v0/b/app-invita.firebasestorage.app/o/pruebas%2FAnuncio%20Cantalab%20(1).png?alt=media&token=aca28f7b-edbc-473d-b4d5-29e05c8bc42e';
+    const message = { image: { url: imageUrl }, caption: 'Mensaje de imagen de prueba desde Firebase' };
+    await sock.sendMessage(jid, message);
+    res.json({ status: 'ok', message: 'Mensaje de imagen enviado.' });
   } catch (error) {
-    console.error("Error al enviar mensaje:", error);
+    console.error('Error enviando mensaje de imagen:', error);
+    res.status(500).json({ status: 'error', message: 'Error al enviar mensaje de imagen.' });
   }
-}
+});
 
-/**
- * Función que procesa el mensaje de tipo pdfChatGPT:
- * - Genera la estrategia y el PDF si aún no existe en el lead.
- * - Envía el PDF por WhatsApp.
- * - Actualiza el lead con el campo 'pdfEstrategia' y cambia la etiqueta a "planEnviado".
- */
-async function procesarMensajePDFChatGPT(lead) {
+// Endpoint para enviar mensaje de audio con URL de Firebase y wave form (ptt)
+app.get('/api/whatsapp/send/audio', async (req, res) => {
+  let phone = req.query.phone;
+  if (!phone) return res.status(400).json({ status: 'error', message: 'Número de teléfono requerido.' });
+  
+  if (!phone.startsWith('521')) {
+    phone = `521${phone}`;
+  }
+  
+  const sock = getWhatsAppSock();
+  if (!sock) {
+    return res.status(500).json({ status: 'error', message: 'No hay conexión activa con WhatsApp.' });
+  }
+  
   try {
-    console.log(`Procesando PDF ChatGPT para el lead ${lead.id}`);
-
-    // Si el lead no tiene un PDF generado, lo creamos
-    if (!lead.pdfEstrategia) {
-      if (!lead.giro) {
-        console.error("El lead no contiene el campo 'giro'. Se asigna valor predeterminado 'general'.");
-        lead.giro = "general";
-      }
-      // Pasar el objeto completo lead a generarEstrategia
-      const strategyText = await generarEstrategia(lead);
-      if (!strategyText) {
-        console.error("No se pudo generar la estrategia.");
-        return;
-      }
-      // Genera el PDF usando el módulo generatePDF
-      const pdfFilePath = await generatePDF(lead, strategyText);
-      if (!pdfFilePath) {
-        console.error("No se generó el PDF, pdfFilePath es nulo.");
-        return;
-      }
-      console.log("PDF generado en:", pdfFilePath);
-      // Actualizar el lead con la ruta del PDF
-      await db.collection('leads').doc(lead.id).update({ pdfEstrategia: pdfFilePath });
-      lead.pdfEstrategia = pdfFilePath;
-    }
-
-    // Enviar el PDF por WhatsApp
-    const sock = getWhatsAppSock();
-    if (!sock) {
-      console.error("No hay conexión activa con WhatsApp.");
-      return;
-    }
-    let phone = lead.telefono;
-    if (!phone.startsWith('521')) {
-      phone = `521${phone}`;
-    }
     const jid = `${phone}@s.whatsapp.net`;
-    const pdfBuffer = fs.readFileSync(lead.pdfEstrategia);
-    await sock.sendMessage(jid, {
-      document: pdfBuffer,
-      fileName: `Estrategia-${lead.nombre}.pdf`,
-      mimetype: "application/pdf"
-    });
-    console.log(`PDF de estrategia enviado a ${lead.telefono}`);
-
-    // Actualizar la etiqueta del lead a "planEnviado"
-    await db.collection('leads').doc(lead.id).update({ etiqueta: "planEnviado" });
-  } catch (err) {
-    console.error("Error procesando mensaje pdfChatGPT:", err);
-  }
-}
-
-/**
- * Función que procesa las secuencias activas para cada lead.
- * Recuerda que las secuencias son definidas en Firestore y cada mensaje tiene un delay.
- */
-async function processSequences() {
-  console.log("Ejecutando scheduler de secuencias...");
-  try {
-    const leadsSnapshot = await db.collection('leads')
-      .where('secuenciasActivas', '!=', null)
-      .get();
-
-    leadsSnapshot.forEach(async (docSnap) => {
-      const lead = { id: docSnap.id, ...docSnap.data() };
-      if (!lead.secuenciasActivas || lead.secuenciasActivas.length === 0) return;
-      let actualizaciones = false;
-      for (let i = 0; i < lead.secuenciasActivas.length; i++) {
-        const seqActiva = lead.secuenciasActivas[i];
-        const secSnapshot = await db.collection('secuencias')
-          .where('trigger', '==', seqActiva.trigger)
-          .get();
-        if (secSnapshot.empty) continue;
-        const secuencia = secSnapshot.docs[0].data();
-        const mensajes = secuencia.messages;
-        if (seqActiva.index >= mensajes.length) {
-          lead.secuenciasActivas[i] = null;
-          actualizaciones = true;
-          continue;
-        }
-        const mensaje = mensajes[seqActiva.index];
-        const startTime = new Date(seqActiva.startTime);
-        const envioProgramado = new Date(startTime.getTime() + mensaje.delay * 60000);
-        if (Date.now() >= envioProgramado.getTime()) {
-          await enviarMensaje(lead, mensaje);
-          seqActiva.index += 1;
-          actualizaciones = true;
-        }
-      }
-      if (actualizaciones) {
-        lead.secuenciasActivas = lead.secuenciasActivas.filter(item => item !== null);
-        await db.collection('leads').doc(lead.id).update({
-          secuenciasActivas: lead.secuenciasActivas
-        });
-      }
-    });
+    // URL del audio en Firebase
+    const audioUrl = 'https://firebasestorage.googleapis.com/v0/b/app-invita.firebasestorage.app/o/pruebas%2Faudio-ejemplo-CL.mp3?alt=media&token=084ce466-35d9-45cb-a59b-844e86087bac';
+    const message = { 
+      audio: { url: audioUrl },
+      mimetype: 'audio/mpeg',
+      ptt: true
+    };
+    await sock.sendMessage(jid, message);
+    res.json({ status: 'ok', message: 'Mensaje de audio enviado.' });
   } catch (error) {
-    console.error("Error en processSequences:", error);
+    console.error('Error enviando mensaje de audio:', error);
+    res.status(500).json({ status: 'error', message: 'Error al enviar mensaje de audio.' });
   }
-}
-
-cron.schedule('* * * * *', () => {
-  processSequences();
 });
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Conectar a WhatsApp al iniciar el servidor
-  connectToWhatsApp().catch(err => console.error("Error al conectar WhatsApp en startup:", err));
 });
