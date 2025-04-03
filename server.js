@@ -1,26 +1,23 @@
-// server/server.js
-import express from 'express';
-import cors from 'cors';
-import bodyParser from 'body-parser';
-import fs from 'fs';
-import path from 'path';
-import axios from 'axios';
-import dotenv from 'dotenv';
-import cron from 'node-cron';
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const dotenv = require('dotenv');
+const cron = require('node-cron');
 
 dotenv.config();
 
 // Importar Firebase Admin
-import { db } from './firebaseAdmin.js';
+const { db } = require('./firebaseAdmin');
 
 // Importar integración con WhatsApp y funciones para PDF y estrategia
-import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } from './whatsappService.js';
-import { generarEstrategia } from './chatGpt.js';
+const { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } = require('./whatsappService');
+const { generarEstrategia } = require('./chatGpt');
 
-import { generatePDF } from './utils/generatePDF.js';
-
-// O, si prefieres usar el otro método:
-// import { generateStrategyPDF } from './utils/generateStrategyPDF.js';
+// Importar función para generar PDF (asegúrate de tenerla en la ruta indicada)
+const { generatePDF } = require('./utils/generatePDF');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -95,7 +92,7 @@ async function enviarMensaje(lead, mensaje) {
         }
         const audioMsg = {
           audio: audioBuffer,
-          mimetype: 'audio/mp4', // o 'audio/m4a'
+          mimetype: 'audio/mp4',
           fileName: 'output.m4a',
           ptt: true
         };
@@ -136,7 +133,7 @@ async function procesarMensajePDFChatGPT(lead) {
         console.error("No se pudo generar la estrategia.");
         return;
       }
-      // Genera el PDF usando el nuevo módulo generatePDF
+      // Genera el PDF usando el módulo generatePDF
       const pdfFilePath = await generatePDF(lead, strategyText);
       if (!pdfFilePath) {
         console.error("No se generó el PDF, pdfFilePath es nulo.");
@@ -173,7 +170,6 @@ async function procesarMensajePDFChatGPT(lead) {
     console.error("Error procesando mensaje pdfChatGPT:", err);
   }
 }
-
 
 /**
  * Función que procesa las secuencias activas para cada lead.

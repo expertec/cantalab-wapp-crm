@@ -1,9 +1,8 @@
-// server/whatsappService.js
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
-import QRCode from 'qrcode-terminal';
-import Pino from 'pino';
-import fs from 'fs';
-import path from 'path';
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const QRCode = require('qrcode-terminal');
+const Pino = require('pino');
+const fs = require('fs');
+const path = require('path');
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
@@ -12,7 +11,7 @@ let whatsappSock = null;
 // Ajusta la ruta al disco persistente en Render
 const localAuthFolder = '/var/data';
 
-export async function connectToWhatsApp() {
+async function connectToWhatsApp() {
   try {
     console.log("Verificando carpeta de autenticación en:", localAuthFolder);
     if (!fs.existsSync(localAuthFolder)) {
@@ -70,14 +69,21 @@ export async function connectToWhatsApp() {
   }
 }
 
-export function getLatestQR() {
+function getLatestQR() {
   return latestQR;
 }
 
-export function getConnectionStatus() {
+function getConnectionStatus() {
   return connectionStatus;
 }
 
-export function getWhatsAppSock() {
+function getWhatsAppSock() {
   return whatsappSock;
 }
+
+module.exports = {
+  connectToWhatsApp,
+  getLatestQR,
+  getConnectionStatus,
+  getWhatsAppSock
+};

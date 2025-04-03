@@ -1,15 +1,12 @@
-// server/scheduler.js
-import axios from 'axios';
-import cron from 'node-cron';
-import { db } from './firebaseAdmin.js';
-import { getWhatsAppSock } from './whatsappService.js';
-import fs from 'fs';
-import path from 'path';
-import { generarEstrategia } from './chatGpt.js';
-// Importamos el nuevo módulo generatePDF (basado en Puppeteer)
-import { generatePDF } from './utils/generatePDF.js';
-// IMPORTA o crea la función uploadPDFToStorage para subir el PDF a Storage
-import { uploadPDFToStorage } from './utils/uploadPDF.js'; 
+const axios = require('axios');
+const cron = require('node-cron');
+const fs = require('fs');
+const path = require('path');
+const { db } = require('./firebaseAdmin');
+const { getWhatsAppSock } = require('./whatsappService');
+const { generarEstrategia } = require('./chatGpt');
+const { generatePDF } = require('./utils/generatePDF');
+const { uploadPDFToStorage } = require('./utils/uploadPDF'); 
 
 function replacePlaceholders(template, leadData) {
   return template.replace(/\{\{(\w+)\}\}/g, (match, fieldName) => {
@@ -83,13 +80,13 @@ async function enviarPDFPlan(lead) {
         console.error("El lead no tiene campo 'giro', se asigna 'general'");
         lead.giro = "general";
       }
-      // PASAR EL OBJETO COMPLETO lead a generarEstrategia para que el prompt se personalice correctamente
+      // Genera la estrategia personalizada
       const strategyText = await generarEstrategia(lead);
       if (!strategyText) {
         console.error("No se pudo generar la estrategia.");
         return;
       }
-      // Genera el PDF usando el nuevo módulo generatePDF (basado en Puppeteer)
+      // Genera el PDF usando generatePDF
       const pdfFilePath = await generatePDF(lead, strategyText);
       if (!pdfFilePath) {
         console.error("No se generó el PDF, pdfFilePath es nulo.");
@@ -185,8 +182,10 @@ cron.schedule('* * * * *', () => {
   processSequences();
 });
 
+const port = process.env.PORT || 3001;
+const express = require('express');
+const app = express();
+
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Conectar a WhatsApp al iniciar el servidor
-  connectToWhatsApp().catch(err => console.error("Error al conectar WhatsApp en startup:", err));
 });

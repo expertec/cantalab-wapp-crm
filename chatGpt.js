@@ -1,6 +1,6 @@
-import dotenv from 'dotenv';
+const dotenv = require('dotenv');
 dotenv.config();
-import { Configuration, OpenAIApi } from 'openai';
+const { Configuration, OpenAIApi } = require('openai');
 
 if (!process.env.OPENAI_API_KEY) {
   throw new Error("Falta la variable de entorno OPENAI_API_KEY");
@@ -13,21 +13,12 @@ const openai = new OpenAIApi(configuration);
 
 /**
  * Genera un plan de ventas para Facebook en formato de texto plano,
- * personalizado según los datos del lead ("giro" y "descripcion") y que
- * incluya un calendario de contenidos de 15 días con ejemplos específicos.
+ * personalizado según los datos del lead.
  *
- * @param {object} lead - Objeto con datos del lead, por ejemplo:
- *   {
- *     negocio: "Refacciones Rafa",
- *     giro: "Venta de refacciones para autos",
- *     descripcion: "Vendemos refacciones para automóviles con garantía y asesoría personalizada.",
- *     nombre: "Rafa Soto",
- *     telefono: "8311760335"
- *   }
- * @returns {Promise<string|null>} - El plan generado en texto plano o null en caso de error.
+ * @param {object} lead - Objeto con datos del lead.
+ * @returns {Promise<string|null>} - El plan generado o null en caso de error.
  */
-export async function generarEstrategia(lead) {
-  // Verificar y mostrar el objeto lead para depuración
+async function generarEstrategia(lead) {
   console.log("Datos del lead:", lead);
 
   const promptData = {
@@ -60,7 +51,6 @@ El plan debe estar en formato de texto plano y debe incluir las siguientes secci
 
 Genera el plan completo en texto plano, con secciones claras y numeradas, personalizando cada sección basándote en la información proporcionada.`;
 
-  // Imprime el prompt para verificar qué se envía a ChatGPT
   console.log("Prompt enviado a ChatGPT:", prompt);
 
   try {
@@ -70,7 +60,6 @@ Genera el plan completo en texto plano, con secciones claras y numeradas, person
       temperature: 0.7,
     });
     const plan = response.data.choices[0].message.content;
-    // Imprime la respuesta recibida de ChatGPT para diagnosticar la personalización
     console.log("Respuesta de ChatGPT:", plan);
     return plan;
   } catch (error) {
@@ -78,3 +67,7 @@ Genera el plan completo en texto plano, con secciones claras y numeradas, person
     return null;
   }
 }
+
+module.exports = {
+  generarEstrategia
+};
