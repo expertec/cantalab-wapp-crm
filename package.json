@@ -2,6 +2,7 @@
   "name": "server",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,9 +12,6 @@
   "engines": {
     "node": "20.x"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.16",
     "axios": "^1.8.4",
