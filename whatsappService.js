@@ -9,6 +9,9 @@ let latestQR = null;
 let connectionStatus = "Desconectado";
 let whatsappSock = null;
 
+// Variable para el backoff en reconexiones por error 515
+let reconnectAttempts = 0;
+
 // Ruta al disco persistente en Render
 const localAuthFolder = '/var/data';
 
@@ -37,31 +40,38 @@ export async function connectToWhatsApp() {
     sock.ev.on('connection.update', (update) => {
       console.log("connection.update:", update);
       const { connection, lastDisconnect, qr } = update;
+      
       if (qr) {
         latestQR = qr;
         connectionStatus = "QR disponible. Escanéalo.";
         QRCode.generate(qr, { small: true });
         console.log("QR generado, escanéalo.");
       }
+      
       if (connection === 'open') {
         connectionStatus = "Conectado";
         latestQR = null;
+        reconnectAttempts = 0; // reiniciamos el contador al conectarse
         console.log("Conexión exitosa con WhatsApp!");
       }
+      
       if (connection === 'close') {
         const reason = lastDisconnect?.error?.output?.statusCode;
         connectionStatus = "Desconectado";
         console.log("Conexión cerrada. Razón:", reason);
         
-        // Configuramos el delay según el error
-        let delayTime = 10000; // Por defecto, 10 segundos
+        let delayTime = 10000; // Delay por defecto: 10 segundos
         
         if (reason === 408) {
-          console.log("Error 408 (QR timeout): no se limpia el estado y se espera 30 segundos.");
+          // Error QR timeout: no limpiar el estado y esperar 30 segundos
+          reconnectAttempts = 0;
           delayTime = 30000;
+          console.log("Error 408 (QR timeout): se espera 30 segundos sin limpiar el estado.");
         } else if (reason === 515) {
-          console.log("Error 515 (Stream Errored): se borrarán los contenidos de autenticación y se esperarán 30 segundos.");
-          delayTime = 30000;
+          // Error de stream: limpiar estado y aumentar el delay (exponential backoff)
+          reconnectAttempts++;
+          delayTime = Math.min(30000 * reconnectAttempts, 300000); // hasta 5 minutos máximo
+          console.log(`Error 515 (Stream Errored): intento ${reconnectAttempts}, se borrarán los contenidos de autenticación y se esperarán ${delayTime / 1000} segundos.`);
           try {
             if (fs.existsSync(localAuthFolder)) {
               const files = fs.readdirSync(localAuthFolder);
@@ -75,7 +85,8 @@ export async function connectToWhatsApp() {
             console.error("Error al borrar el estado de autenticación:", err);
           }
         } else {
-          // Para otros errores, limpiar estado y usar delay por defecto
+          // Para otros errores, limpiar el estado y usar delay por defecto
+          reconnectAttempts = 0;
           try {
             if (fs.existsSync(localAuthFolder)) {
               const files = fs.readdirSync(localAuthFolder);
