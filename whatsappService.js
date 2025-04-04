@@ -9,7 +9,7 @@ let latestQR = null;
 let connectionStatus = "Desconectado";
 let whatsappSock = null;
 
-// Ajusta la ruta al disco persistente en Render
+// Ruta al disco persistente en Render
 const localAuthFolder = '/var/data';
 
 export async function connectToWhatsApp() {
@@ -53,17 +53,21 @@ export async function connectToWhatsApp() {
         connectionStatus = "Desconectado";
         console.log("Conexión cerrada. Razón:", reason);
         
-        // Elimina el estado de autenticación para forzar una nueva sesión
+        // Elimina el contenido del directorio de autenticación sin borrar la carpeta
         try {
           if (fs.existsSync(localAuthFolder)) {
-            fs.rmdirSync(localAuthFolder, { recursive: true });
-            console.log("Se ha borrado el estado de autenticación para una nueva sesión.");
+            const files = fs.readdirSync(localAuthFolder);
+            for (const file of files) {
+              const filePath = path.join(localAuthFolder, file);
+              fs.rmSync(filePath, { recursive: true, force: true });
+            }
+            console.log("Se han borrado los contenidos de autenticación para una nueva sesión.");
           }
         } catch (err) {
           console.error("Error al borrar el estado de autenticación:", err);
         }
         
-        // Reconecta como si fuera la primera vez
+        // Reconectar como si fuera la primera vez
         console.log("Intentando reconectar con WhatsApp (nueva sesión)...");
         connectToWhatsApp();
       }
