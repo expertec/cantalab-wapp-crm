@@ -1,6 +1,7 @@
-const admin = require('firebase-admin');
-const fs = require('fs');
-const path = require('path');
+// server/firebaseAdmin.js
+import admin from 'firebase-admin';
+import fs from 'fs';
+import path from 'path';
 
 // Define la ruta del archivo secreto montado por Render
 const firebaseKeyPath = path.join('/etc/secrets', 'serviceAccountKey.json');
@@ -28,4 +29,4 @@ admin.initializeApp({
 // Obtén la instancia de Firestore
 const db = admin.firestore();
 
-module.exports = { admin, db };
+export { admin, db };
