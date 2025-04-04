@@ -4,6 +4,7 @@ import QRCode from 'qrcode-terminal';
 import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import { db } from './firebaseAdmin.js'; // Importamos Firestore
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
@@ -34,6 +35,7 @@ export async function connectToWhatsApp() {
       version,
     });
     whatsappSock = sock;
+
     sock.ev.on('connection.update', (update) => {
       console.log("connection.update:", update);
       const { connection, lastDisconnect, qr } = update;
@@ -74,10 +76,61 @@ export async function connectToWhatsApp() {
         }
       }
     });
+
     sock.ev.on('creds.update', (creds) => {
       console.log("Credenciales actualizadas:", creds);
       saveCreds();
     });
+
+    // Escuchar mensajes entrantes para capturar nuevos leads
+    sock.ev.on('messages.upsert', async (m) => {
+      console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
+      for (const msg of m.messages) {
+        // Procesar solo mensajes entrantes (no enviados por nosotros)
+        if (msg.key && !msg.key.fromMe) {
+          const jid = msg.key.remoteJid;
+          // Ignorar mensajes de grupos
+          if (jid.endsWith('@g.us')) {
+            console.log("Mensaje de grupo recibido, se ignora.");
+            continue;
+          }
+          try {
+            const leadRef = db.collection('leads').doc(jid);
+            const doc = await leadRef.get();
+
+            if (!doc.exists) {
+              // Extraer número y nombre del mensaje
+              const telefono = jid.split('@')[0];
+              const nombre = msg.pushName || "Sin nombre";
+
+              // Construimos el objeto lead con los campos que deseas
+              const nuevoLead = {
+                nombre,
+                telefono,
+                fecha_creacion: new Date(),
+                estado: "nuevo",
+                etiquetas: ["NuevoLead"],
+                secuenciasActivas: [
+                  {
+                    trigger: "NuevoLead",
+                    index: 0,
+                    startTime: new Date()
+                  }
+                ]
+              };
+
+              await leadRef.set(nuevoLead);
+              console.log("Nuevo lead guardado:", nuevoLead);
+            } else {
+              console.log("Lead ya existente:", jid);
+            }
+          } catch (error) {
+            console.error("Error guardando nuevo lead:", error);
+          }
+        }
+      }
+    });
+
     console.log("Conexión de WhatsApp establecida, retornando socket.");
     return sock;
   } catch (error) {
