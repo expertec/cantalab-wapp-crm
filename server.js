@@ -16,7 +16,6 @@ import { db } from './firebaseAdmin.js';
 // Importar integración con WhatsApp y funciones para PDF y estrategia
 import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } from './whatsappService.js';
 import { generarEstrategia } from './chatGpt.js';
-
 import { generatePDF } from './utils/generatePDF.js';
 
 // O, si prefieres usar el otro método:
@@ -60,6 +59,84 @@ app.get('/api/whatsapp/connect', async (req, res) => {
       status: "Error",
       message: "Error al conectar con WhatsApp."
     });
+  }
+});
+
+// Endpoint para enviar mensaje de texto
+app.get('/api/whatsapp/send/text', async (req, res) => {
+  try {
+    const phone = req.query.phone;
+    if (!phone) {
+      return res.status(400).json({ error: "El parámetro phone es requerido" });
+    }
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
+    }
+    let number = phone;
+    if (!number.startsWith('521')) {
+      number = `521${number}`;
+    }
+    const jid = `${number}@s.whatsapp.net`;
+    await sock.sendMessage(jid, { text: "Mensaje de prueba desde API (texto)" });
+    res.json({ success: true, message: "Mensaje de texto enviado" });
+  } catch (error) {
+    console.error("Error enviando mensaje de texto:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint para enviar mensaje de imagen
+app.get('/api/whatsapp/send/image', async (req, res) => {
+  try {
+    const phone = req.query.phone;
+    if (!phone) {
+      return res.status(400).json({ error: "El parámetro phone es requerido" });
+    }
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
+    }
+    let number = phone;
+    if (!number.startsWith('521')) {
+      number = `521${number}`;
+    }
+    const jid = `${number}@s.whatsapp.net`;
+    // Se utiliza una URL de imagen de prueba
+    await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
+    res.json({ success: true, message: "Mensaje de imagen enviado" });
+  } catch (error) {
+    console.error("Error enviando mensaje de imagen:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint para enviar mensaje de audio
+app.get('/api/whatsapp/send/audio', async (req, res) => {
+  try {
+    const phone = req.query.phone;
+    if (!phone) {
+      return res.status(400).json({ error: "El parámetro phone es requerido" });
+    }
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
+    }
+    let number = phone;
+    if (!number.startsWith('521')) {
+      number = `521${number}`;
+    }
+    const jid = `${number}@s.whatsapp.net`;
+    await sock.sendMessage(jid, {
+      audio: { url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
+      mimetype: "audio/mp4",
+      fileName: "prueba.m4a",
+      ptt: true
+    });
+    res.json({ success: true, message: "Mensaje de audio enviado" });
+  } catch (error) {
+    console.error("Error enviando mensaje de audio:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -173,7 +250,6 @@ async function procesarMensajePDFChatGPT(lead) {
     console.error("Error procesando mensaje pdfChatGPT:", err);
   }
 }
-
 
 /**
  * Función que procesa las secuencias activas para cada lead.
