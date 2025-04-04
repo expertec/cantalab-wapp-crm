@@ -52,10 +52,20 @@ export async function connectToWhatsApp() {
         const reason = lastDisconnect?.error?.output?.statusCode;
         connectionStatus = "Desconectado";
         console.log("Conexión cerrada. Razón:", reason);
-        if (reason !== DisconnectReason.loggedOut) {
-          console.log("Intentando reconectar con WhatsApp...");
-          connectToWhatsApp();
+        
+        // Elimina el estado de autenticación para forzar una nueva sesión
+        try {
+          if (fs.existsSync(localAuthFolder)) {
+            fs.rmdirSync(localAuthFolder, { recursive: true });
+            console.log("Se ha borrado el estado de autenticación para una nueva sesión.");
+          }
+        } catch (err) {
+          console.error("Error al borrar el estado de autenticación:", err);
         }
+        
+        // Reconecta como si fuera la primera vez
+        console.log("Intentando reconectar con WhatsApp (nueva sesión)...");
+        connectToWhatsApp();
       }
     });
     sock.ev.on('creds.update', (creds) => {
