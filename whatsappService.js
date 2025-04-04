@@ -53,9 +53,13 @@ export async function connectToWhatsApp() {
         connectionStatus = "Desconectado";
         console.log("Conexión cerrada. Razón:", reason);
         
-        // Agregamos un delay antes de reiniciar para darle tiempo a que se consuma el QR
-        setTimeout(() => {
-          // Elimina el contenido del directorio de autenticación sin borrar la carpeta
+        let delayTime = 10000; // 10 segundos por defecto
+
+        if (reason === 408) {
+          console.log("Error: QR refs attempts ended (timeout). No se limpia el estado, se espera 30 segundos antes de reconectar.");
+          delayTime = 30000; // Espera 30 segundos para darle más tiempo al escaneo
+        } else {
+          // Para otros errores, se limpia el contenido del directorio
           try {
             if (fs.existsSync(localAuthFolder)) {
               const files = fs.readdirSync(localAuthFolder);
@@ -68,9 +72,12 @@ export async function connectToWhatsApp() {
           } catch (err) {
             console.error("Error al borrar el estado de autenticación:", err);
           }
+        }
+        
+        setTimeout(() => {
           console.log("Intentando reconectar con WhatsApp (nueva sesión)...");
           connectToWhatsApp();
-        }, 10000); // Delay de 10 segundos (ajusta este valor según necesites)
+        }, delayTime);
       }
     });
     sock.ev.on('creds.update', (creds) => {
