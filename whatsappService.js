@@ -53,23 +53,24 @@ export async function connectToWhatsApp() {
         connectionStatus = "Desconectado";
         console.log("Conexión cerrada. Razón:", reason);
         
-        // Elimina el contenido del directorio de autenticación sin borrar la carpeta
-        try {
-          if (fs.existsSync(localAuthFolder)) {
-            const files = fs.readdirSync(localAuthFolder);
-            for (const file of files) {
-              const filePath = path.join(localAuthFolder, file);
-              fs.rmSync(filePath, { recursive: true, force: true });
+        // Agregamos un delay antes de reiniciar para darle tiempo a que se consuma el QR
+        setTimeout(() => {
+          // Elimina el contenido del directorio de autenticación sin borrar la carpeta
+          try {
+            if (fs.existsSync(localAuthFolder)) {
+              const files = fs.readdirSync(localAuthFolder);
+              for (const file of files) {
+                const filePath = path.join(localAuthFolder, file);
+                fs.rmSync(filePath, { recursive: true, force: true });
+              }
+              console.log("Se han borrado los contenidos de autenticación para una nueva sesión.");
             }
-            console.log("Se han borrado los contenidos de autenticación para una nueva sesión.");
+          } catch (err) {
+            console.error("Error al borrar el estado de autenticación:", err);
           }
-        } catch (err) {
-          console.error("Error al borrar el estado de autenticación:", err);
-        }
-        
-        // Reconectar como si fuera la primera vez
-        console.log("Intentando reconectar con WhatsApp (nueva sesión)...");
-        connectToWhatsApp();
+          console.log("Intentando reconectar con WhatsApp (nueva sesión)...");
+          connectToWhatsApp();
+        }, 10000); // Delay de 10 segundos (ajusta este valor según necesites)
       }
     });
     sock.ev.on('creds.update', (creds) => {
