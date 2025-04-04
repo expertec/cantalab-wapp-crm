@@ -53,14 +53,15 @@ export async function connectToWhatsApp() {
         connectionStatus = "Desconectado";
         console.log("Conexión cerrada. Razón:", reason);
         
-        let delayTime = 10000; // Delay por defecto: 10 segundos
+        // Configuramos el delay según el error
+        let delayTime = 10000; // Por defecto, 10 segundos
         
         if (reason === 408) {
-          console.log("Error 408: QR timeout. No se limpia el estado de autenticación y se espera 30 segundos antes de reconectar.");
+          console.log("Error 408 (QR timeout): no se limpia el estado y se espera 30 segundos.");
           delayTime = 30000;
         } else if (reason === 515) {
-          console.log("Error 515: Stream Errored (restart required). Se borrarán los contenidos de autenticación y se esperarán 20 segundos antes de reconectar.");
-          delayTime = 20000;
+          console.log("Error 515 (Stream Errored): se borrarán los contenidos de autenticación y se esperarán 30 segundos.");
+          delayTime = 30000;
           try {
             if (fs.existsSync(localAuthFolder)) {
               const files = fs.readdirSync(localAuthFolder);
@@ -74,7 +75,7 @@ export async function connectToWhatsApp() {
             console.error("Error al borrar el estado de autenticación:", err);
           }
         } else {
-          // Para otros errores: limpiar estado y usar delay por defecto
+          // Para otros errores, limpiar estado y usar delay por defecto
           try {
             if (fs.existsSync(localAuthFolder)) {
               const files = fs.readdirSync(localAuthFolder);
