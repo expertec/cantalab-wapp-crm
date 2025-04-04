@@ -52,8 +52,24 @@ export async function connectToWhatsApp() {
         const reason = lastDisconnect?.error?.output?.statusCode;
         connectionStatus = "Desconectado";
         console.log("Conexión cerrada. Razón:", reason);
-        if (reason !== DisconnectReason.loggedOut) {
-          console.log("Intentando reconectar con WhatsApp...");
+        if (reason === DisconnectReason.loggedOut) {
+          console.log("La sesión se cerró (loggedOut). Limpiando estado de autenticación para registrar una nueva cuenta...");
+          try {
+            if (fs.existsSync(localAuthFolder)) {
+              const files = fs.readdirSync(localAuthFolder);
+              for (const file of files) {
+                const filePath = path.join(localAuthFolder, file);
+                fs.rmSync(filePath, { recursive: true, force: true });
+              }
+              console.log("Estado de autenticación limpiado.");
+            }
+          } catch (error) {
+            console.error("Error limpiando el estado de autenticación:", error);
+          }
+          console.log("Conectando a una nueva cuenta de WhatsApp...");
+          connectToWhatsApp();
+        } else {
+          console.log("Intentando reconectar con la misma sesión de WhatsApp...");
           connectToWhatsApp();
         }
       }
