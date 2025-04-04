@@ -82,9 +82,10 @@ export async function connectToWhatsApp() {
       saveCreds();
     });
 
-    // Escuchar mensajes entrantes para capturar nuevos leads
+    // Escuchar mensajes entrantes para capturar nuevos leads y activar secuencias
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
+      const triggerSecuencia = "NuevoLead"; // Valor de trigger para activar la secuencia
       for (const msg of m.messages) {
         // Procesar solo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
@@ -97,32 +98,51 @@ export async function connectToWhatsApp() {
           try {
             const leadRef = db.collection('leads').doc(jid);
             const doc = await leadRef.get();
-
             if (!doc.exists) {
               // Extraer número y nombre del mensaje
               const telefono = jid.split('@')[0];
               const nombre = msg.pushName || "Sin nombre";
-
-              // Construimos el objeto lead con los campos que deseas
+              // Crear el nuevo lead con los campos requeridos
               const nuevoLead = {
                 nombre,
                 telefono,
                 fecha_creacion: new Date(),
                 estado: "nuevo",
-                etiquetas: ["NuevoLead"],
+                etiquetas: [triggerSecuencia],
                 secuenciasActivas: [
                   {
-                    trigger: "NuevoLead",
+                    trigger: triggerSecuencia,
                     index: 0,
                     startTime: new Date()
                   }
-                ]
+                ],
+                source: "WhatsApp"
               };
-
               await leadRef.set(nuevoLead);
               console.log("Nuevo lead guardado:", nuevoLead);
             } else {
               console.log("Lead ya existente:", jid);
+              // Verificar si la secuencia ya está activa; si no, agregarla
+              const leadData = doc.data();
+              const secuencias = leadData.secuenciasActivas || [];
+              const yaActivada = secuencias.some(seq => seq.trigger === triggerSecuencia);
+              if (!yaActivada) {
+                secuencias.push({
+                  trigger: triggerSecuencia,
+                  index: 0,
+                  startTime: new Date()
+                });
+                // Agregar la etiqueta si aún no existe
+                const etiquetas = leadData.etiquetas || [];
+                if (!etiquetas.includes(triggerSecuencia)) {
+                  etiquetas.push(triggerSecuencia);
+                }
+                await leadRef.update({
+                  secuenciasActivas: secuencias,
+                  etiquetas: etiquetas
+                });
+                console.log("Secuencia activada para lead existente:", jid);
+              }
             }
           } catch (error) {
             console.error("Error guardando nuevo lead:", error);
