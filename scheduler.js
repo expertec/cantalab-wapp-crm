@@ -6,10 +6,8 @@ import { getWhatsAppSock } from './whatsappService.js';
 import fs from 'fs';
 import path from 'path';
 import { generarEstrategia } from './chatGpt.js';
-// Importamos el nuevo módulo generatePDF (basado en Puppeteer)
 import { generatePDF } from './utils/generatePDF.js';
-// IMPORTA o crea la función uploadPDFToStorage para subir el PDF a Storage
-import { uploadPDFToStorage } from './utils/uploadPDF.js'; 
+import { uploadPDFToStorage } from './utils/uploadPDF.js';
 
 function replacePlaceholders(template, leadData) {
   return template.replace(/\{\{(\w+)\}\}/g, (match, fieldName) => {
@@ -19,7 +17,6 @@ function replacePlaceholders(template, leadData) {
 
 /**
  * Función para enviar mensaje vía WhatsApp.
- * Se diferencia el caso de pdf: si es "pdfChatGPT" se lee el campo pdfEstrategia.
  */
 async function enviarMensaje(lead, mensaje) {
   try {
@@ -69,10 +66,7 @@ async function enviarMensaje(lead, mensaje) {
 }
 
 /**
- * Función que se encarga de enviar el PDF de la estrategia.
- * - Genera la estrategia y el PDF si aún no existe en el lead.
- * - Envía el PDF por WhatsApp.
- * - Actualiza el lead con el campo 'pdfEstrategia' y cambia la etiqueta a "planEnviado".
+ * Función que procesa y envía el PDF de estrategia.
  */
 async function enviarPDFPlan(lead) {
   try {
@@ -83,30 +77,25 @@ async function enviarPDFPlan(lead) {
         console.error("El lead no tiene campo 'giro', se asigna 'general'");
         lead.giro = "general";
       }
-      // PASAR EL OBJETO COMPLETO lead a generarEstrategia para que el prompt se personalice correctamente
       const strategyText = await generarEstrategia(lead);
       if (!strategyText) {
         console.error("No se pudo generar la estrategia.");
         return;
       }
-      // Genera el PDF usando el nuevo módulo generatePDF (basado en Puppeteer)
       const pdfFilePath = await generatePDF(lead, strategyText);
       if (!pdfFilePath) {
         console.error("No se generó el PDF, pdfFilePath es nulo.");
         return;
       }
       console.log("PDF generado en:", pdfFilePath);
-      // Sube el PDF a Storage y obtiene la URL pública
       pdfUrl = await uploadPDFToStorage(pdfFilePath, `estrategias/${path.basename(pdfFilePath)}`);
       if (!pdfUrl) {
         console.error("No se pudo subir el PDF a Storage.");
         return;
       }
-      // Actualiza el lead con la URL del PDF
       await db.collection('leads').doc(lead.id).update({ pdfEstrategia: pdfUrl });
       lead.pdfEstrategia = pdfUrl;
     }
-    // Envía el PDF vía WhatsApp
     const sock = getWhatsAppSock();
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
@@ -124,7 +113,6 @@ async function enviarPDFPlan(lead) {
       mimetype: "application/pdf"
     });
     console.log(`PDF de estrategia enviado a ${lead.telefono}`);
-    // Actualiza la etiqueta del lead a "planEnviado"
     const currentData = (await db.collection('leads').doc(lead.id).get()).data();
     const etiquetas = currentData.etiquetas || [];
     if (!etiquetas.includes("planEnviado")) {
@@ -136,6 +124,10 @@ async function enviarPDFPlan(lead) {
   }
 }
 
+/**
+ * Función que procesa las secuencias activas para cada lead.
+ * Se buscan secuencias en Firestore cuya raíz tenga el trigger correspondiente.
+ */
 async function processSequences() {
   console.log("Ejecutando scheduler de secuencias...");
   try {
@@ -143,19 +135,26 @@ async function processSequences() {
       .where('secuenciasActivas', '!=', null)
       .get();
 
+    console.log(`Se encontraron ${leadsSnapshot.size} leads con secuencias activas`);
     leadsSnapshot.forEach(async (docSnap) => {
       const lead = { id: docSnap.id, ...docSnap.data() };
       if (!lead.secuenciasActivas || lead.secuenciasActivas.length === 0) return;
       let actualizaciones = false;
       for (let i = 0; i < lead.secuenciasActivas.length; i++) {
         const seqActiva = lead.secuenciasActivas[i];
+        console.log(`Buscando secuencia con trigger: "${seqActiva.trigger}" para lead ${lead.id}`);
         const secSnapshot = await db.collection('secuencias')
           .where('trigger', '==', seqActiva.trigger)
           .get();
-        if (secSnapshot.empty) continue;
+        console.log(`Se encontraron ${secSnapshot.size} secuencias para trigger "${seqActiva.trigger}"`);
+        if (secSnapshot.empty) {
+          console.log(`No se encontró secuencia para trigger "${seqActiva.trigger}"`);
+          continue;
+        }
         const secuencia = secSnapshot.docs[0].data();
         const mensajes = secuencia.messages;
         if (seqActiva.index >= mensajes.length) {
+          console.log(`Secuencia completada para lead ${lead.id}`);
           lead.secuenciasActivas[i] = null;
           actualizaciones = true;
           continue;
@@ -163,8 +162,10 @@ async function processSequences() {
         const mensaje = mensajes[seqActiva.index];
         const startTime = new Date(seqActiva.startTime);
         const envioProgramado = new Date(startTime.getTime() + mensaje.delay * 60000);
+        console.log(`Para lead ${lead.id} - mensaje[${seqActiva.index}]: delay=${mensaje.delay} min, programado a: ${envioProgramado.toLocaleString()}, hora actual: ${new Date().toLocaleString()}`);
         if (Date.now() >= envioProgramado.getTime()) {
           await enviarMensaje(lead, mensaje);
+          console.log(`Mensaje enviado para lead ${lead.id}, tipo: ${mensaje.type}`);
           seqActiva.index += 1;
           actualizaciones = true;
         }
@@ -174,6 +175,7 @@ async function processSequences() {
         await db.collection('leads').doc(lead.id).update({
           secuenciasActivas: lead.secuenciasActivas
         });
+        console.log(`Lead ${lead.id} actualizado con nuevas secuencias`);
       }
     });
   } catch (error) {
@@ -185,8 +187,4 @@ cron.schedule('* * * * *', () => {
   processSequences();
 });
 
-app.listen(port, () => {
-  console.log(`Servidor corriendo en el puerto ${port}`);
-  // Conectar a WhatsApp al iniciar el servidor
-  connectToWhatsApp().catch(err => console.error("Error al conectar WhatsApp en startup:", err));
-});
+export { processSequences };
