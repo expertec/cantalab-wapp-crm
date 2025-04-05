@@ -128,6 +128,7 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
     }
     const jid = `${number}@s.whatsapp.net`;
     await sock.sendMessage(jid, {
+      // Aquí se usa una URL de audio de prueba; se espera que sea un archivo .oga
       audio: { url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
       mimetype: "audio/mp4",
       fileName: "prueba.m4a",
@@ -160,7 +161,7 @@ async function enviarMensaje(lead, mensaje) {
 
     if (mensaje.type === "texto") {
       await sock.sendMessage(jid, { text: contenidoFinal });
-    } } else if (mensaje.type === "audio") {
+    } else if (mensaje.type === "audio") {
       try {
         console.log(`Descargando audio desde: ${contenidoFinal} para el lead ${lead.id}`);
         const response = await axios.get(contenidoFinal, { responseType: 'arraybuffer' });
@@ -170,7 +171,7 @@ async function enviarMensaje(lead, mensaje) {
           console.error(`Error: El archivo descargado está vacío para el lead ${lead.id}`);
           return;
         }
-        // Solo se aceptan archivos .oga
+        // Solo se aceptan archivos con extensión .oga
         if (!contenidoFinal.endsWith('.oga')) {
           console.error("Error: Solo se aceptan archivos con extensión .oga");
           return;
@@ -178,7 +179,6 @@ async function enviarMensaje(lead, mensaje) {
         const mimetype = 'audio/ogg';
         const fileName = 'output.oga';
         console.log(`Usando mimetype: ${mimetype}, fileName: ${fileName}`);
-        // Quitar ptt: true para enviar como archivo normal
         const audioMsg = {
           audio: audioBuffer,
           mimetype,
@@ -188,9 +188,7 @@ async function enviarMensaje(lead, mensaje) {
       } catch (err) {
         console.error("Error al descargar o enviar audio:", err);
       }
-    }
-    
-     else if (mensaje.type === "imagen") {
+    } else if (mensaje.type === "imagen") {
       await sock.sendMessage(jid, { image: { url: contenidoFinal } });
     } else if (mensaje.type === "pdfChatGPT") {
       await procesarMensajePDFChatGPT(lead);
