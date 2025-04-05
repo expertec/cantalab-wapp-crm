@@ -80,9 +80,29 @@ export async function connectToWhatsApp() {
     });
 
     // ===== Registro y activación de leads =====
-    // Se obtiene la lista de triggers disponibles en la colección "secuencias"
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
+
+      // Primero, obtenemos la configuración global
+      let config = { autoSaveLeads: true, defaultTrigger: "NuevoLead" };
+      try {
+        const configSnap = await db.collection("config").doc("appConfig").get();
+        if (configSnap.exists) {
+          config = { ...config, ...configSnap.data() };
+        } else {
+          console.log("No se encontró 'appConfig', usando valores por defecto.");
+        }
+      } catch (error) {
+        console.error("Error al obtener configuración:", error);
+      }
+      
+      // Si no está activado el guardado automático, salimos
+      if (!config.autoSaveLeads) {
+        console.log("Guardado automático de leads desactivado en configuración.");
+        return;
+      }
+
+      // Obtenemos los triggers disponibles en la colección "secuencias"
       let secuenciasQuerySnapshot;
       try {
         secuenciasQuerySnapshot = await db.collection("secuencias").get();
@@ -91,18 +111,21 @@ export async function connectToWhatsApp() {
         return;
       }
       const availableTriggers = secuenciasQuerySnapshot.docs.map(doc => doc.data().trigger);
-      const triggerDefault = "NuevoLead";
+      const triggerDefault = config.defaultTrigger || "NuevoLead";
+      
       for (const msg of m.messages) {
+        // Procesamos solo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
           const jid = msg.key.remoteJid;
+          // Ignorar mensajes de grupos
           if (jid.endsWith('@g.us')) {
             console.log("Mensaje de grupo recibido, se ignora.");
             continue;
           }
           try {
             const leadRef = db.collection('leads').doc(jid);
-            const doc = await leadRef.get();
-            if (!doc.exists) {
+            const docSnap = await leadRef.get();
+            if (!docSnap.exists) {
               const telefono = jid.split('@')[0];
               const nombre = msg.pushName || "Sin nombre";
               const etiquetas = [triggerDefault];
@@ -129,8 +152,9 @@ export async function connectToWhatsApp() {
               console.log("Nuevo lead guardado:", nuevoLead);
             } else {
               console.log("Lead ya existente:", jid);
-              const leadData = doc.data();
+              const leadData = docSnap.data();
               const secuencias = leadData.secuenciasActivas || [];
+              // Si no tiene activada la secuencia con el trigger configurado, se agrega
               if (!secuencias.some(seq => seq.trigger === triggerDefault)) {
                 if (availableTriggers.includes(triggerDefault)) {
                   secuencias.push({
