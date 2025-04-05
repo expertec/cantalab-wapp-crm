@@ -160,12 +160,8 @@ async function enviarMensaje(lead, mensaje) {
 
     if (mensaje.type === "texto") {
       await sock.sendMessage(jid, { text: contenidoFinal });
-    } else if (mensaje.type === "audio") {
+    } } else if (mensaje.type === "audio") {
       try {
-        if (!contenidoFinal.endsWith('.oga')) {
-          console.error("Error: Solo se aceptan archivos con extensión .oga");
-          return;
-        }
         console.log(`Descargando audio desde: ${contenidoFinal} para el lead ${lead.id}`);
         const response = await axios.get(contenidoFinal, { responseType: 'arraybuffer' });
         const audioBuffer = Buffer.from(response.data, 'binary');
@@ -174,20 +170,26 @@ async function enviarMensaje(lead, mensaje) {
           console.error(`Error: El archivo descargado está vacío para el lead ${lead.id}`);
           return;
         }
+        // Solo se aceptan archivos .oga
+        if (!contenidoFinal.endsWith('.oga')) {
+          console.error("Error: Solo se aceptan archivos con extensión .oga");
+          return;
+        }
         const mimetype = 'audio/ogg';
         const fileName = 'output.oga';
         console.log(`Usando mimetype: ${mimetype}, fileName: ${fileName}`);
+        // Quitar ptt: true para enviar como archivo normal
         const audioMsg = {
           audio: audioBuffer,
           mimetype,
-          fileName,
-          ptt: true
+          fileName
         };
         await sock.sendMessage(jid, audioMsg);
       } catch (err) {
         console.error("Error al descargar o enviar audio:", err);
       }
     }
+    
      else if (mensaje.type === "imagen") {
       await sock.sendMessage(jid, { image: { url: contenidoFinal } });
     } else if (mensaje.type === "pdfChatGPT") {
