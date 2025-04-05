@@ -5,7 +5,6 @@ import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
 import { db } from './firebaseAdmin.js';
-import { collection, getDocs } from "firebase/firestore"; // Asegurarse de importar
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
@@ -81,26 +80,21 @@ export async function connectToWhatsApp() {
     });
 
     // ===== Registro y activación de leads =====
-    // Aquí se utiliza la misma lógica que en LeadForm: se consulta la colección de secuencias
-    // para obtener los triggers disponibles y, en función de las etiquetas, se activa la secuencia.
+    // Se obtiene la lista de triggers disponibles en la colección "secuencias"
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
-      // Primero, obtenemos todos los triggers disponibles en la colección "secuencias"
       let secuenciasQuerySnapshot;
       try {
-        secuenciasQuerySnapshot = await getDocs(collection(db, "secuencias"));
+        secuenciasQuerySnapshot = await db.collection("secuencias").get();
       } catch (err) {
         console.error("Error al obtener secuencias:", err);
         return;
       }
       const availableTriggers = secuenciasQuerySnapshot.docs.map(doc => doc.data().trigger);
-      // Definimos un trigger por defecto; en LeadForm se usa "NuevoLead"
       const triggerDefault = "NuevoLead";
       for (const msg of m.messages) {
-        // Procesamos solo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
           const jid = msg.key.remoteJid;
-          // Ignorar mensajes de grupos
           if (jid.endsWith('@g.us')) {
             console.log("Mensaje de grupo recibido, se ignora.");
             continue;
@@ -111,9 +105,7 @@ export async function connectToWhatsApp() {
             if (!doc.exists) {
               const telefono = jid.split('@')[0];
               const nombre = msg.pushName || "Sin nombre";
-              // En este ejemplo, asignamos la etiqueta por defecto "NuevoLead"
               const etiquetas = [triggerDefault];
-              // Agregamos secuencias activas solo si el trigger está disponible
               const secuenciasAAgregar = [];
               etiquetas.forEach(tag => {
                 if (availableTriggers.includes(tag)) {
@@ -139,7 +131,6 @@ export async function connectToWhatsApp() {
               console.log("Lead ya existente:", jid);
               const leadData = doc.data();
               const secuencias = leadData.secuenciasActivas || [];
-              // Si no tiene activada la secuencia con el trigger default, se agrega
               if (!secuencias.some(seq => seq.trigger === triggerDefault)) {
                 if (availableTriggers.includes(triggerDefault)) {
                   secuencias.push({
