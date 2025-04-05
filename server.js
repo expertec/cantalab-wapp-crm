@@ -156,7 +156,7 @@ async function enviarMensaje(lead, mensaje) {
       phone = `521${phone}`;
     }
     const jid = `${phone}@s.whatsapp.net`;
-    const contenidoFinal = mensaje.contenido; // Asumimos que aquí ya se han aplicado los placeholders
+    const contenidoFinal = mensaje.contenido; // Asumimos que ya se han aplicado los placeholders
 
     if (mensaje.type === "texto") {
       await sock.sendMessage(jid, { text: contenidoFinal });
@@ -170,10 +170,17 @@ async function enviarMensaje(lead, mensaje) {
           console.error(`Error: El archivo descargado está vacío para el lead ${lead.id}`);
           return;
         }
+        // Detectar la extensión para ajustar mimetype y fileName
+        let mimetype = 'audio/mp4';
+        let fileName = 'output.m4a';
+        if (contenidoFinal.endsWith('.oga') || contenidoFinal.endsWith('.ogg')) {
+          mimetype = 'audio/ogg';
+          fileName = 'output.ogg';
+        }
         const audioMsg = {
           audio: audioBuffer,
-          mimetype: 'audio/mp4', // o 'audio/m4a'
-          fileName: 'output.m4a',
+          mimetype,
+          fileName,
           ptt: true
         };
         await sock.sendMessage(jid, audioMsg);
@@ -200,32 +207,25 @@ async function enviarMensaje(lead, mensaje) {
 async function procesarMensajePDFChatGPT(lead) {
   try {
     console.log(`Procesando PDF ChatGPT para el lead ${lead.id}`);
-
-    // Si el lead no tiene un PDF generado, lo creamos
     if (!lead.pdfEstrategia) {
       if (!lead.giro) {
         console.error("El lead no contiene el campo 'giro'. Se asigna valor predeterminado 'general'.");
         lead.giro = "general";
       }
-      // Pasar el objeto completo lead a generarEstrategia
       const strategyText = await generarEstrategia(lead);
       if (!strategyText) {
         console.error("No se pudo generar la estrategia.");
         return;
       }
-      // Genera el PDF usando el nuevo módulo generatePDF
       const pdfFilePath = await generatePDF(lead, strategyText);
       if (!pdfFilePath) {
         console.error("No se generó el PDF, pdfFilePath es nulo.");
         return;
       }
       console.log("PDF generado en:", pdfFilePath);
-      // Actualizar el lead con la ruta del PDF
       await db.collection('leads').doc(lead.id).update({ pdfEstrategia: pdfFilePath });
       lead.pdfEstrategia = pdfFilePath;
     }
-
-    // Enviar el PDF por WhatsApp
     const sock = getWhatsAppSock();
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
@@ -243,8 +243,6 @@ async function procesarMensajePDFChatGPT(lead) {
       mimetype: "application/pdf"
     });
     console.log(`PDF de estrategia enviado a ${lead.telefono}`);
-
-    // Actualizar la etiqueta del lead a "planEnviado"
     await db.collection('leads').doc(lead.id).update({ etiqueta: "planEnviado" });
   } catch (err) {
     console.error("Error procesando mensaje pdfChatGPT:", err);
@@ -253,7 +251,7 @@ async function procesarMensajePDFChatGPT(lead) {
 
 /**
  * Función que procesa las secuencias activas para cada lead.
- * Recuerda que las secuencias son definidas en Firestore y cada mensaje tiene un delay.
+ * Las secuencias se definen en Firestore y cada mensaje tiene un delay.
  */
 async function processSequences() {
   console.log("Ejecutando scheduler de secuencias...");
@@ -306,6 +304,5 @@ cron.schedule('* * * * *', () => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Conectar a WhatsApp al iniciar el servidor
   connectToWhatsApp().catch(err => console.error("Error al conectar WhatsApp en startup:", err));
 });
