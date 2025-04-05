@@ -5,6 +5,7 @@ import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
 import { db } from './firebaseAdmin.js';
+import { collection, getDocs } from "firebase/firestore"; // Asegurarse de importar
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
@@ -20,7 +21,9 @@ export async function connectToWhatsApp() {
     } else {
       console.log("Carpeta de autenticación existente:", localAuthFolder);
     }
+    console.log("Obteniendo estado de autenticación...");
     const { state, saveCreds } = await useMultiFileAuthState(localAuthFolder);
+    console.log("Obteniendo la última versión de Baileys...");
     const { version } = await fetchLatestBaileysVersion();
     console.log("Versión obtenida:", version);
     console.log("Intentando conectar con WhatsApp...");
@@ -53,14 +56,17 @@ export async function connectToWhatsApp() {
         if (reason === DisconnectReason.loggedOut) {
           console.log("La sesión se cerró (loggedOut). Limpiando estado de autenticación...");
           try {
-            const files = fs.readdirSync(localAuthFolder);
-            for (const file of files) {
-              fs.rmSync(path.join(localAuthFolder, file), { recursive: true, force: true });
+            if (fs.existsSync(localAuthFolder)) {
+              const files = fs.readdirSync(localAuthFolder);
+              for (const file of files) {
+                fs.rmSync(path.join(localAuthFolder, file), { recursive: true, force: true });
+              }
+              console.log("Estado de autenticación limpiado.");
             }
-            console.log("Estado de autenticación limpiado.");
           } catch (error) {
             console.error("Error limpiando el estado:", error);
           }
+          console.log("Conectando a una nueva cuenta de WhatsApp...");
           connectToWhatsApp();
         } else {
           console.log("Reconectando...");
@@ -74,13 +80,27 @@ export async function connectToWhatsApp() {
       saveCreds();
     });
 
-    // Procesar mensajes entrantes y registrar leads
+    // ===== Registro y activación de leads =====
+    // Aquí se utiliza la misma lógica que en LeadForm: se consulta la colección de secuencias
+    // para obtener los triggers disponibles y, en función de las etiquetas, se activa la secuencia.
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
-      const triggerSecuencia = "NuevoLead"; // Valor para activar la secuencia
+      // Primero, obtenemos todos los triggers disponibles en la colección "secuencias"
+      let secuenciasQuerySnapshot;
+      try {
+        secuenciasQuerySnapshot = await getDocs(collection(db, "secuencias"));
+      } catch (err) {
+        console.error("Error al obtener secuencias:", err);
+        return;
+      }
+      const availableTriggers = secuenciasQuerySnapshot.docs.map(doc => doc.data().trigger);
+      // Definimos un trigger por defecto; en LeadForm se usa "NuevoLead"
+      const triggerDefault = "NuevoLead";
       for (const msg of m.messages) {
+        // Procesamos solo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
           const jid = msg.key.remoteJid;
+          // Ignorar mensajes de grupos
           if (jid.endsWith('@g.us')) {
             console.log("Mensaje de grupo recibido, se ignora.");
             continue;
@@ -91,17 +111,26 @@ export async function connectToWhatsApp() {
             if (!doc.exists) {
               const telefono = jid.split('@')[0];
               const nombre = msg.pushName || "Sin nombre";
+              // En este ejemplo, asignamos la etiqueta por defecto "NuevoLead"
+              const etiquetas = [triggerDefault];
+              // Agregamos secuencias activas solo si el trigger está disponible
+              const secuenciasAAgregar = [];
+              etiquetas.forEach(tag => {
+                if (availableTriggers.includes(tag)) {
+                  secuenciasAAgregar.push({
+                    trigger: tag,
+                    startTime: new Date().toISOString(),
+                    index: 0
+                  });
+                }
+              });
               const nuevoLead = {
                 nombre,
                 telefono,
                 fecha_creacion: new Date(),
                 estado: "nuevo",
-                etiquetas: [triggerSecuencia],
-                secuenciasActivas: [{
-                  trigger: triggerSecuencia,
-                  index: 0,
-                  startTime: new Date()
-                }],
+                etiquetas,
+                secuenciasActivas: secuenciasAAgregar,
                 source: "WhatsApp"
               };
               await leadRef.set(nuevoLead);
@@ -110,16 +139,22 @@ export async function connectToWhatsApp() {
               console.log("Lead ya existente:", jid);
               const leadData = doc.data();
               const secuencias = leadData.secuenciasActivas || [];
-              if (!secuencias.some(seq => seq.trigger === triggerSecuencia)) {
-                secuencias.push({
-                  trigger: triggerSecuencia,
-                  index: 0,
-                  startTime: new Date()
-                });
-                const etiquetas = leadData.etiquetas || [];
-                if (!etiquetas.includes(triggerSecuencia)) etiquetas.push(triggerSecuencia);
-                await leadRef.update({ secuenciasActivas: secuencias, etiquetas });
-                console.log("Secuencia activada para lead existente:", jid);
+              // Si no tiene activada la secuencia con el trigger default, se agrega
+              if (!secuencias.some(seq => seq.trigger === triggerDefault)) {
+                if (availableTriggers.includes(triggerDefault)) {
+                  secuencias.push({
+                    trigger: triggerDefault,
+                    startTime: new Date().toISOString(),
+                    index: 0
+                  });
+                  const etiquetas = leadData.etiquetas || [];
+                  if (!etiquetas.includes(triggerDefault)) etiquetas.push(triggerDefault);
+                  await leadRef.update({
+                    secuenciasActivas: secuencias,
+                    etiquetas
+                  });
+                  console.log("Secuencia activada para lead existente:", jid);
+                }
               }
             }
           } catch (error) {
@@ -128,7 +163,6 @@ export async function connectToWhatsApp() {
         }
       }
     });
-
     console.log("Conexión de WhatsApp establecida, retornando socket.");
     return sock;
   } catch (error) {
