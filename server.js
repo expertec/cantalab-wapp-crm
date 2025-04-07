@@ -18,11 +18,9 @@ import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } 
 import { generarEstrategia } from './chatGpt.js';
 import { generatePDF } from './utils/generatePDF.js';
 
-// O, si prefieres usar el otro método:
-// import { generateStrategyPDF } from './utils/generateStrategyPDF.js';
-
 const app = express();
 const port = process.env.PORT || 3001;
+const businessId = process.env.BUSINESS_ID; // Debes definir BUSINESS_ID en tu entorno
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -48,7 +46,8 @@ app.get('/api/whatsapp/status', (req, res) => {
 // Endpoint para iniciar la conexión con WhatsApp
 app.get('/api/whatsapp/connect', async (req, res) => {
   try {
-    await connectToWhatsApp();
+    // Se pasa el businessId para iniciar la sesión del negocio
+    await connectToWhatsApp(businessId);
     res.json({
       status: "Conectado",
       message: "Conexión iniciada. Espera el QR si aún no estás conectado."
@@ -102,7 +101,6 @@ app.get('/api/whatsapp/send/image', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
-    // Se utiliza una URL de imagen de prueba
     await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
     res.json({ success: true, message: "Mensaje de imagen enviado" });
   } catch (error) {
@@ -142,7 +140,7 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
 
 /**
  * Función para enviar mensajes según el tipo.
- * Se ha incluido el caso "pdfChatGPT" que genera, guarda y envía el PDF.
+ * Caso especial "pdfChatGPT" se maneja similar a lo anterior.
  */
 async function enviarMensaje(lead, mensaje) {
   try {
@@ -156,7 +154,7 @@ async function enviarMensaje(lead, mensaje) {
       phone = `521${phone}`;
     }
     const jid = `${phone}@s.whatsapp.net`;
-    const contenidoFinal = mensaje.contenido; // Asumimos que aquí ya se han aplicado los placeholders
+    const contenidoFinal = mensaje.contenido; // Se asume que ya se han aplicado los placeholders
 
     if (mensaje.type === "texto") {
       await sock.sendMessage(jid, { text: contenidoFinal });
@@ -192,39 +190,32 @@ async function enviarMensaje(lead, mensaje) {
 
 /**
  * Función que procesa el mensaje de tipo pdfChatGPT:
- * - Genera la estrategia y el PDF si aún no existe en el lead.
+ * - Genera la estrategia y el PDF si no existe.
  * - Envía el PDF por WhatsApp.
- * - Actualiza el lead con el campo 'pdfEstrategia' y cambia la etiqueta a "planEnviado".
+ * - Actualiza el lead con campo 'pdfEstrategia' y etiqueta "planEnviado".
  */
 async function procesarMensajePDFChatGPT(lead) {
   try {
     console.log(`Procesando PDF ChatGPT para el lead ${lead.id}`);
-
-    // Si el lead no tiene un PDF generado, lo creamos
     if (!lead.pdfEstrategia) {
       if (!lead.giro) {
-        console.error("El lead no contiene el campo 'giro'. Se asigna valor predeterminado 'general'.");
+        console.error("El lead no contiene el campo 'giro'. Se asigna 'general'.");
         lead.giro = "general";
       }
-      // Pasar el objeto completo lead a generarEstrategia
       const strategyText = await generarEstrategia(lead);
       if (!strategyText) {
         console.error("No se pudo generar la estrategia.");
         return;
       }
-      // Genera el PDF usando el nuevo módulo generatePDF
       const pdfFilePath = await generatePDF(lead, strategyText);
       if (!pdfFilePath) {
         console.error("No se generó el PDF, pdfFilePath es nulo.");
         return;
       }
       console.log("PDF generado en:", pdfFilePath);
-      // Actualizar el lead con la ruta del PDF
       await db.collection('leads').doc(lead.id).update({ pdfEstrategia: pdfFilePath });
       lead.pdfEstrategia = pdfFilePath;
     }
-
-    // Enviar el PDF por WhatsApp
     const sock = getWhatsAppSock();
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
@@ -242,8 +233,6 @@ async function procesarMensajePDFChatGPT(lead) {
       mimetype: "application/pdf"
     });
     console.log(`PDF de estrategia enviado a ${lead.telefono}`);
-
-    // Actualizar la etiqueta del lead a "planEnviado"
     await db.collection('leads').doc(lead.id).update({ etiqueta: "planEnviado" });
   } catch (err) {
     console.error("Error procesando mensaje pdfChatGPT:", err);
@@ -252,7 +241,6 @@ async function procesarMensajePDFChatGPT(lead) {
 
 /**
  * Función que procesa las secuencias activas para cada lead.
- * Recuerda que las secuencias son definidas en Firestore y cada mensaje tiene un delay.
  */
 async function processSequences() {
   console.log("Ejecutando scheduler de secuencias...");
@@ -260,7 +248,7 @@ async function processSequences() {
     const leadsSnapshot = await db.collection('leads')
       .where('secuenciasActivas', '!=', null)
       .get();
-
+      
     leadsSnapshot.forEach(async (docSnap) => {
       const lead = { id: docSnap.id, ...docSnap.data() };
       if (!lead.secuenciasActivas || lead.secuenciasActivas.length === 0) return;
@@ -281,6 +269,7 @@ async function processSequences() {
         const mensaje = mensajes[seqActiva.index];
         const startTime = new Date(seqActiva.startTime);
         const envioProgramado = new Date(startTime.getTime() + mensaje.delay * 60000);
+        console.log(`Lead ${lead.id} - mensaje[${seqActiva.index}]: delay=${mensaje.delay} min, programado a: ${envioProgramado.toLocaleString()}, hora actual: ${new Date().toLocaleString()}`);
         if (Date.now() >= envioProgramado.getTime()) {
           await enviarMensaje(lead, mensaje);
           seqActiva.index += 1;
@@ -292,6 +281,7 @@ async function processSequences() {
         await db.collection('leads').doc(lead.id).update({
           secuenciasActivas: lead.secuenciasActivas
         });
+        console.log(`Lead ${lead.id} actualizado con nuevas secuencias`);
       }
     });
   } catch (error) {
@@ -305,6 +295,7 @@ cron.schedule('* * * * *', () => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Conectar a WhatsApp al iniciar el servidor
-  connectToWhatsApp().catch(err => console.error("Error al conectar WhatsApp en startup:", err));
+  // Se invoca la conexión de WhatsApp pasando el businessId desde la variable de entorno.
+  const businessId = process.env.BUSINESS_ID;
+  connectToWhatsApp(businessId).catch(err => console.error("Error al conectar WhatsApp en startup:", err));
 });

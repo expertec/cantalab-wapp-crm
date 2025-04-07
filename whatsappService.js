@@ -9,9 +9,13 @@ import { db } from './firebaseAdmin.js';
 let latestQR = null;
 let connectionStatus = "Desconectado";
 let whatsappSock = null;
-const localAuthFolder = '/var/data';
+let currentBusinessId = null; // Guardará el businessId de la sesión actual
 
-export async function connectToWhatsApp() {
+// La función ahora recibe businessId para definir un directorio único para cada negocio.
+export async function connectToWhatsApp(businessId) {
+  currentBusinessId = businessId;
+  const localAuthFolder = `/var/data/${businessId}`;
+  
   try {
     console.log("Verificando carpeta de autenticación en:", localAuthFolder);
     if (!fs.existsSync(localAuthFolder)) {
@@ -20,11 +24,13 @@ export async function connectToWhatsApp() {
     } else {
       console.log("Carpeta de autenticación existente:", localAuthFolder);
     }
+    
     console.log("Obteniendo estado de autenticación...");
     const { state, saveCreds } = await useMultiFileAuthState(localAuthFolder);
     console.log("Obteniendo la última versión de Baileys...");
     const { version } = await fetchLatestBaileysVersion();
     console.log("Versión obtenida:", version);
+    
     console.log("Intentando conectar con WhatsApp...");
     const sock = makeWASocket({
       auth: state,
@@ -33,7 +39,7 @@ export async function connectToWhatsApp() {
       version,
     });
     whatsappSock = sock;
-
+    
     sock.ev.on('connection.update', (update) => {
       console.log("connection.update:", update);
       const { connection, lastDisconnect, qr } = update;
@@ -65,25 +71,25 @@ export async function connectToWhatsApp() {
           } catch (error) {
             console.error("Error limpiando el estado:", error);
           }
-          console.log("Conectando a una nueva cuenta de WhatsApp...");
-          connectToWhatsApp();
+          console.log("Conectando a una nueva cuenta de WhatsApp para businessId:", businessId);
+          connectToWhatsApp(businessId);
         } else {
           console.log("Reconectando...");
-          connectToWhatsApp();
+          connectToWhatsApp(businessId);
         }
       }
     });
-
+    
     sock.ev.on('creds.update', (creds) => {
       console.log("Credenciales actualizadas:", creds);
       saveCreds();
     });
-
+    
     // ===== Registro y activación de leads =====
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
-
-      // Primero, obtenemos la configuración global
+      
+      // Cargar configuración global (autoSaveLeads, defaultTrigger)
       let config = { autoSaveLeads: true, defaultTrigger: "NuevoLead" };
       try {
         const configSnap = await db.collection("config").doc("appConfig").get();
@@ -96,13 +102,12 @@ export async function connectToWhatsApp() {
         console.error("Error al obtener configuración:", error);
       }
       
-      // Si no está activado el guardado automático, salimos
       if (!config.autoSaveLeads) {
         console.log("Guardado automático de leads desactivado en configuración.");
         return;
       }
-
-      // Obtenemos los triggers disponibles en la colección "secuencias"
+      
+      // Obtener triggers disponibles en la colección "secuencias"
       let secuenciasQuerySnapshot;
       try {
         secuenciasQuerySnapshot = await db.collection("secuencias").get();
@@ -114,7 +119,7 @@ export async function connectToWhatsApp() {
       const triggerDefault = config.defaultTrigger || "NuevoLead";
       
       for (const msg of m.messages) {
-        // Procesamos solo mensajes entrantes (no enviados por nosotros)
+        // Procesar sólo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
           const jid = msg.key.remoteJid;
           // Ignorar mensajes de grupos
@@ -142,6 +147,7 @@ export async function connectToWhatsApp() {
               const nuevoLead = {
                 nombre,
                 telefono,
+                businessId: currentBusinessId,  // Asocia el lead al negocio actual
                 fecha_creacion: new Date(),
                 estado: "nuevo",
                 etiquetas,
@@ -178,6 +184,7 @@ export async function connectToWhatsApp() {
         }
       }
     });
+    
     console.log("Conexión de WhatsApp establecida, retornando socket.");
     return sock;
   } catch (error) {
