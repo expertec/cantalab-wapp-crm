@@ -14,13 +14,18 @@ dotenv.config();
 import { db } from './firebaseAdmin.js';
 
 // Importar integración con WhatsApp y funciones para PDF y estrategia
-import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } from './whatsappService.js';
+import { 
+  connectToWhatsApp, 
+  getLatestQR, 
+  getConnectionStatus, 
+  getWhatsAppSock 
+} from './whatsappService.js';
 import { generarEstrategia } from './chatGpt.js';
 import { generatePDF } from './utils/generatePDF.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
-const businessId = process.env.BUSINESS_ID; // Debes definir BUSINESS_ID en tu entorno
+const businessId = process.env.BUSINESS_ID; // Ejemplo: "miNegocio123"
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -38,12 +43,12 @@ app.get('/api/debug-env', (req, res) => {
 // Endpoint para consultar el estado de WhatsApp (QR y conexión)
 app.get('/api/whatsapp/status', (req, res) => {
   res.json({
-    status: getConnectionStatus(),
-    qr: getLatestQR()
+    status: getConnectionStatus(businessId),
+    qr: getLatestQR(businessId)
   });
 });
 
-// Endpoint para iniciar la conexión con WhatsApp (usando BUSINESS_ID)
+// Endpoint para iniciar la conexión con WhatsApp, usando el businessId
 app.get('/api/whatsapp/connect', async (req, res) => {
   try {
     await connectToWhatsApp(businessId);
@@ -100,7 +105,6 @@ app.get('/api/whatsapp/send/image', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
-    // Se utiliza una URL de imagen de prueba
     await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
     res.json({ success: true, message: "Mensaje de imagen enviado" });
   } catch (error) {
@@ -140,7 +144,7 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
 
 /**
  * Función para enviar mensajes según el tipo.
- * Caso especial "pdfChatGPT" se maneja similar a lo anterior.
+ * Caso especial "pdfChatGPT" se maneja de forma similar.
  */
 async function enviarMensaje(lead, mensaje) {
   try {
@@ -192,7 +196,7 @@ async function enviarMensaje(lead, mensaje) {
  * Función que procesa el mensaje de tipo pdfChatGPT:
  * - Genera la estrategia y el PDF si no existe.
  * - Envía el PDF por WhatsApp.
- * - Actualiza el lead con campo 'pdfEstrategia' y etiqueta "planEnviado".
+ * - Actualiza el lead con el campo 'pdfEstrategia' y etiqueta "planEnviado".
  */
 async function procesarMensajePDFChatGPT(lead) {
   try {
@@ -295,7 +299,7 @@ cron.schedule('* * * * *', () => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Iniciar la conexión de WhatsApp pasando el businessId desde la variable de entorno
+  // Inicia la conexión de WhatsApp para el negocio usando el businessId de la variable de entorno
   connectToWhatsApp(businessId).catch(err =>
     console.error("Error al conectar WhatsApp en startup:", err)
   );
