@@ -43,10 +43,9 @@ app.get('/api/whatsapp/status', (req, res) => {
   });
 });
 
-// Endpoint para iniciar la conexión con WhatsApp
+// Endpoint para iniciar la conexión con WhatsApp (usando BUSINESS_ID)
 app.get('/api/whatsapp/connect', async (req, res) => {
   try {
-    // Se pasa el businessId para iniciar la sesión del negocio
     await connectToWhatsApp(businessId);
     res.json({
       status: "Conectado",
@@ -68,7 +67,7 @@ app.get('/api/whatsapp/send/text', async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: "El parámetro phone es requerido" });
     }
-    const sock = getWhatsAppSock();
+    const sock = getWhatsAppSock(businessId);
     if (!sock) {
       return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
@@ -92,7 +91,7 @@ app.get('/api/whatsapp/send/image', async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: "El parámetro phone es requerido" });
     }
-    const sock = getWhatsAppSock();
+    const sock = getWhatsAppSock(businessId);
     if (!sock) {
       return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
@@ -101,6 +100,7 @@ app.get('/api/whatsapp/send/image', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
+    // Se utiliza una URL de imagen de prueba
     await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
     res.json({ success: true, message: "Mensaje de imagen enviado" });
   } catch (error) {
@@ -116,7 +116,7 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: "El parámetro phone es requerido" });
     }
-    const sock = getWhatsAppSock();
+    const sock = getWhatsAppSock(businessId);
     if (!sock) {
       return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
@@ -144,7 +144,7 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
  */
 async function enviarMensaje(lead, mensaje) {
   try {
-    const sock = getWhatsAppSock();
+    const sock = getWhatsAppSock(businessId);
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
       return;
@@ -216,7 +216,7 @@ async function procesarMensajePDFChatGPT(lead) {
       await db.collection('leads').doc(lead.id).update({ pdfEstrategia: pdfFilePath });
       lead.pdfEstrategia = pdfFilePath;
     }
-    const sock = getWhatsAppSock();
+    const sock = getWhatsAppSock(businessId);
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
       return;
@@ -295,7 +295,8 @@ cron.schedule('* * * * *', () => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Se invoca la conexión de WhatsApp pasando el businessId desde la variable de entorno.
-  const businessId = process.env.BUSINESS_ID;
-  connectToWhatsApp(businessId).catch(err => console.error("Error al conectar WhatsApp en startup:", err));
+  // Iniciar la conexión de WhatsApp pasando el businessId desde la variable de entorno
+  connectToWhatsApp(businessId).catch(err =>
+    console.error("Error al conectar WhatsApp en startup:", err)
+  );
 });
