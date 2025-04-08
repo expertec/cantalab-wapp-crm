@@ -14,18 +14,15 @@ dotenv.config();
 import { db } from './firebaseAdmin.js';
 
 // Importar integración con WhatsApp y funciones para PDF y estrategia
-import { 
-  connectToWhatsApp, 
-  getLatestQR, 
-  getConnectionStatus, 
-  getWhatsAppSock 
-} from './whatsappService.js';
+import { connectToWhatsApp, getWhatsAppSock } from './whatsappService.js';
 import { generarEstrategia } from './chatGpt.js';
 import { generatePDF } from './utils/generatePDF.js';
 
+// Definimos un businessId por defecto (esto lo puedes cambiar o reemplazar por otro mecanismo)
+const defaultBusiness = "defaultBusiness";
+
 const app = express();
 const port = process.env.PORT || 3001;
-const businessId = process.env.BUSINESS_ID; // Ejemplo: "miNegocio123"
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -42,16 +39,23 @@ app.get('/api/debug-env', (req, res) => {
 
 // Endpoint para consultar el estado de WhatsApp (QR y conexión)
 app.get('/api/whatsapp/status', (req, res) => {
+  // En este ejemplo usamos la conexión del negocio por defecto.
+  // Como getLatestQR y getConnectionStatus se definieron en whatsappService.js para la versión multi-business,
+  // podemos acceder a ellos desde el objeto "connections" que se maneja en ese módulo.
+  // Para simplificar, volvemos a obtener la conexión del negocio por defecto:
+  const { connections } = await import('./whatsappService.js');
+  const connectionData = connections[defaultBusiness] || {};
   res.json({
-    status: getConnectionStatus(businessId),
-    qr: getLatestQR(businessId)
+    status: connectionData.connectionStatus || "Desconectado",
+    qr: connectionData.latestQR || null
   });
 });
 
-// Endpoint para iniciar la conexión con WhatsApp, usando el businessId
+// Endpoint para iniciar la conexión con WhatsApp para el negocio por defecto.
 app.get('/api/whatsapp/connect', async (req, res) => {
   try {
-    await connectToWhatsApp(businessId);
+    // Se pasa el businessId para iniciar la sesión del negocio
+    await connectToWhatsApp(defaultBusiness);
     res.json({
       status: "Conectado",
       message: "Conexión iniciada. Espera el QR si aún no estás conectado."
@@ -72,7 +76,7 @@ app.get('/api/whatsapp/send/text', async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: "El parámetro phone es requerido" });
     }
-    const sock = getWhatsAppSock(businessId);
+    const sock = getWhatsAppSock(defaultBusiness);
     if (!sock) {
       return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
@@ -96,7 +100,7 @@ app.get('/api/whatsapp/send/image', async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: "El parámetro phone es requerido" });
     }
-    const sock = getWhatsAppSock(businessId);
+    const sock = getWhatsAppSock(defaultBusiness);
     if (!sock) {
       return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
@@ -105,6 +109,7 @@ app.get('/api/whatsapp/send/image', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
+    // Se utiliza una URL de imagen de prueba
     await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
     res.json({ success: true, message: "Mensaje de imagen enviado" });
   } catch (error) {
@@ -120,7 +125,7 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: "El parámetro phone es requerido" });
     }
-    const sock = getWhatsAppSock(businessId);
+    const sock = getWhatsAppSock(defaultBusiness);
     if (!sock) {
       return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
@@ -144,11 +149,11 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
 
 /**
  * Función para enviar mensajes según el tipo.
- * Caso especial "pdfChatGPT" se maneja de forma similar.
+ * En el caso "pdfChatGPT", se genera el PDF si es necesario, se envía por WhatsApp y se actualiza el lead.
  */
 async function enviarMensaje(lead, mensaje) {
   try {
-    const sock = getWhatsAppSock(businessId);
+    const sock = getWhatsAppSock(defaultBusiness);
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
       return;
@@ -194,16 +199,16 @@ async function enviarMensaje(lead, mensaje) {
 
 /**
  * Función que procesa el mensaje de tipo pdfChatGPT:
- * - Genera la estrategia y el PDF si no existe.
+ * - Genera la estrategia y el PDF si aún no existe en el lead.
  * - Envía el PDF por WhatsApp.
- * - Actualiza el lead con el campo 'pdfEstrategia' y etiqueta "planEnviado".
+ * - Actualiza el lead con el campo 'pdfEstrategia' y agrega la etiqueta "planEnviado".
  */
 async function procesarMensajePDFChatGPT(lead) {
   try {
     console.log(`Procesando PDF ChatGPT para el lead ${lead.id}`);
     if (!lead.pdfEstrategia) {
       if (!lead.giro) {
-        console.error("El lead no contiene el campo 'giro'. Se asigna 'general'.");
+        console.error("El lead no contiene el campo 'giro'. Se asigna valor predeterminado 'general'.");
         lead.giro = "general";
       }
       const strategyText = await generarEstrategia(lead);
@@ -220,7 +225,7 @@ async function procesarMensajePDFChatGPT(lead) {
       await db.collection('leads').doc(lead.id).update({ pdfEstrategia: pdfFilePath });
       lead.pdfEstrategia = pdfFilePath;
     }
-    const sock = getWhatsAppSock(businessId);
+    const sock = getWhatsAppSock(defaultBusiness);
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
       return;
@@ -245,6 +250,7 @@ async function procesarMensajePDFChatGPT(lead) {
 
 /**
  * Función que procesa las secuencias activas para cada lead.
+ * Se recorren las secuencias almacenadas en el documento del lead y se envían los mensajes cuando corresponde.
  */
 async function processSequences() {
   console.log("Ejecutando scheduler de secuencias...");
@@ -252,7 +258,7 @@ async function processSequences() {
     const leadsSnapshot = await db.collection('leads')
       .where('secuenciasActivas', '!=', null)
       .get();
-      
+
     leadsSnapshot.forEach(async (docSnap) => {
       const lead = { id: docSnap.id, ...docSnap.data() };
       if (!lead.secuenciasActivas || lead.secuenciasActivas.length === 0) return;
@@ -299,8 +305,8 @@ cron.schedule('* * * * *', () => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Inicia la conexión de WhatsApp para el negocio usando el businessId de la variable de entorno
-  connectToWhatsApp(businessId).catch(err =>
+  // Conectar a WhatsApp al iniciar el servidor usando el businessId por defecto
+  connectToWhatsApp(defaultBusiness).catch(err =>
     console.error("Error al conectar WhatsApp en startup:", err)
   );
 });
