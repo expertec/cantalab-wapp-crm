@@ -13,7 +13,7 @@ dotenv.config();
 // Importar Firebase Admin
 import { db } from "./firebaseAdmin.js";
 
-// Importar integración con WhatsApp y funciones para PDF y estrategia
+// Importar funciones del servicio de WhatsApp y herramientas de PDF/estrategia
 import {
   connectToWhatsApp,
   getLatestQR,
@@ -25,10 +25,19 @@ import { generatePDF } from "./utils/generatePDF.js";
 
 const app = express();
 const port = process.env.PORT || 3001;
-const businessId = process.env.BUSINESS_ID || "defaultBusiness"; // Asegúrate de definir BUSINESS_ID o usa el valor por defecto
 
 app.use(cors());
 app.use(bodyParser.json());
+
+// Middleware para requerir el parámetro businessId en cada request que lo necesite
+function requireBusinessId(req, res, next) {
+  const businessId = req.query.businessId;
+  if (!businessId) {
+    return res.status(400).json({ error: "Falta el parámetro businessId" });
+  }
+  req.businessId = businessId;
+  next();
+}
 
 // Endpoint de depuración para verificar el archivo secreto de Firebase
 app.get("/api/debug-env", (req, res) => {
@@ -42,24 +51,23 @@ app.get("/api/debug-env", (req, res) => {
   });
 });
 
-// Endpoint para consultar el estado de WhatsApp (QR y conexión) para el negocio
-app.get("/api/whatsapp/status", (req, res) => {
+// Endpoint para consultar el estado de WhatsApp (QR y conexión) para un negocio
+app.get("/api/whatsapp/status", requireBusinessId, (req, res) => {
+  const businessId = req.businessId;
   res.json({
     status: getConnectionStatus(businessId),
     qr: getLatestQR(businessId),
   });
 });
 
-// Endpoint para iniciar la conexión con WhatsApp para el negocio
-app.get("/api/whatsapp/connect", async (req, res) => {
+// Endpoint para iniciar la conexión con WhatsApp para un negocio
+app.get("/api/whatsapp/connect", requireBusinessId, async (req, res) => {
+  const businessId = req.businessId;
   try {
     await connectToWhatsApp(businessId);
     res.json({
       status: "Conectado",
-      message:
-        "Conexión iniciada para businessId " +
-        businessId +
-        ". Espera el QR si aún no estás conectado.",
+      message: `Conexión iniciada para businessId ${businessId}. Espera el QR si aún no estás conectado.`,
     });
   } catch (error) {
     console.error("Error al conectar con WhatsApp:", error);
@@ -71,17 +79,16 @@ app.get("/api/whatsapp/connect", async (req, res) => {
 });
 
 // Endpoint para enviar mensaje de texto
-app.get("/api/whatsapp/send/text", async (req, res) => {
+app.get("/api/whatsapp/send/text", requireBusinessId, async (req, res) => {
+  const { businessId } = req;
+  const { phone } = req.query;
+  if (!phone) {
+    return res.status(400).json({ error: "El parámetro phone es requerido" });
+  }
   try {
-    const phone = req.query.phone;
-    if (!phone) {
-      return res.status(400).json({ error: "El parámetro phone es requerido" });
-    }
     const sock = getWhatsAppSock(businessId);
     if (!sock) {
-      return res
-        .status(500)
-        .json({ error: "No hay conexión activa con WhatsApp" });
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
     let number = phone;
     if (!number.startsWith("521")) {
@@ -97,17 +104,16 @@ app.get("/api/whatsapp/send/text", async (req, res) => {
 });
 
 // Endpoint para enviar mensaje de imagen
-app.get("/api/whatsapp/send/image", async (req, res) => {
+app.get("/api/whatsapp/send/image", requireBusinessId, async (req, res) => {
+  const { businessId } = req;
+  const { phone } = req.query;
+  if (!phone) {
+    return res.status(400).json({ error: "El parámetro phone es requerido" });
+  }
   try {
-    const phone = req.query.phone;
-    if (!phone) {
-      return res.status(400).json({ error: "El parámetro phone es requerido" });
-    }
     const sock = getWhatsAppSock(businessId);
     if (!sock) {
-      return res
-        .status(500)
-        .json({ error: "No hay conexión activa con WhatsApp" });
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
     let number = phone;
     if (!number.startsWith("521")) {
@@ -123,29 +129,28 @@ app.get("/api/whatsapp/send/image", async (req, res) => {
   }
 });
 
-// Endpoint para enviar mensaje de audio
-app.get("/api/whatsapp/send/audio", async (req, res) => {
+// Endpoint para enviar mensaje de audio (.oga)
+app.get("/api/whatsapp/send/audio", requireBusinessId, async (req, res) => {
+  const { businessId } = req;
+  const { phone } = req.query;
+  if (!phone) {
+    return res.status(400).json({ error: "El parámetro phone es requerido" });
+  }
   try {
-    const phone = req.query.phone;
-    if (!phone) {
-      return res.status(400).json({ error: "El parámetro phone es requerido" });
-    }
     const sock = getWhatsAppSock(businessId);
     if (!sock) {
-      return res
-        .status(500)
-        .json({ error: "No hay conexión activa con WhatsApp" });
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
     }
     let number = phone;
     if (!number.startsWith("521")) {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
+    // Aquí se asume que la URL termina en .oga (como se requiere)
     await sock.sendMessage(jid, {
-      audio: { url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
-      mimetype: "audio/mp4",
-      fileName: "prueba.m4a",
-      ptt: true,
+      audio: { url: "https://your-cdn.com/path/to/audio.oga" },
+      mimetype: "audio/ogg",
+      fileName: "prueba.oga",
     });
     res.json({ success: true, message: "Mensaje de audio enviado" });
   } catch (error) {
@@ -156,10 +161,16 @@ app.get("/api/whatsapp/send/audio", async (req, res) => {
 
 /**
  * Función para enviar mensajes según el tipo.
- * En el caso "pdfChatGPT", se genera y envía el PDF.
+ * En el caso "pdfChatGPT", se genera y envía el PDF por WhatsApp.
  */
 async function enviarMensaje(lead, mensaje) {
   try {
+    // Se requiere el businessId, que en este caso se debe obtener del lead (asociado a su negocio)
+    const businessId = lead.businessId;
+    if (!businessId) {
+      console.error("Lead no tiene asociado un businessId.");
+      return;
+    }
     const sock = getWhatsAppSock(businessId);
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
@@ -176,20 +187,12 @@ async function enviarMensaje(lead, mensaje) {
       await sock.sendMessage(jid, { text: contenidoFinal });
     } else if (mensaje.type === "audio") {
       try {
-        console.log(
-          `Descargando audio desde: ${contenidoFinal} para el lead ${lead.id}`
-        );
-        const response = await axios.get(contenidoFinal, {
-          responseType: "arraybuffer",
-        });
+        console.log(`Descargando audio desde: ${contenidoFinal} para el lead ${lead.id}`);
+        const response = await axios.get(contenidoFinal, { responseType: "arraybuffer" });
         const audioBuffer = Buffer.from(response.data, "binary");
-        console.log(
-          `Audio descargado. Tamaño: ${audioBuffer.length} bytes para el lead ${lead.id}`
-        );
+        console.log(`Audio descargado. Tamaño: ${audioBuffer.length} bytes para el lead ${lead.id}`);
         if (audioBuffer.length === 0) {
-          console.error(
-            `Error: El archivo descargado está vacío para el lead ${lead.id}`
-          );
+          console.error(`Error: El archivo descargado está vacío para el lead ${lead.id}`);
           return;
         }
         // Aceptar solo archivos .oga
@@ -231,9 +234,7 @@ async function procesarMensajePDFChatGPT(lead) {
     console.log(`Procesando PDF ChatGPT para el lead ${lead.id}`);
     if (!lead.pdfEstrategia) {
       if (!lead.giro) {
-        console.error(
-          "El lead no contiene el campo 'giro'. Se asigna valor predeterminado 'general'."
-        );
+        console.error("El lead no contiene el campo 'giro'. Se asigna valor predeterminado 'general'.");
         lead.giro = "general";
       }
       const strategyText = await generarEstrategia(lead);
@@ -250,6 +251,7 @@ async function procesarMensajePDFChatGPT(lead) {
       await db.collection("leads").doc(lead.id).update({ pdfEstrategia: pdfFilePath });
       lead.pdfEstrategia = pdfFilePath;
     }
+    const businessId = lead.businessId;
     const sock = getWhatsAppSock(businessId);
     if (!sock) {
       console.error("No hay conexión activa con WhatsApp.");
@@ -288,15 +290,11 @@ async function processSequences() {
       if (!lead.secuenciasActivas || lead.secuenciasActivas.length === 0) continue;
       let actualizaciones = false;
       for (let seqActiva of lead.secuenciasActivas) {
-        console.log(
-          `Para lead ${lead.id} se procesa secuencia con trigger: "${seqActiva.trigger}"`
-        );
+        console.log(`Para lead ${lead.id} se procesa secuencia con trigger: "${seqActiva.trigger}"`);
         const secSnapshot = await db.collection("secuencias")
           .where("trigger", "==", seqActiva.trigger)
           .get();
-        console.log(
-          `Se encontraron ${secSnapshot.size} secuencias para trigger "${seqActiva.trigger}"`
-        );
+        console.log(`Se encontraron ${secSnapshot.size} secuencias para trigger "${seqActiva.trigger}"`);
         if (secSnapshot.empty) {
           console.log(`No se encontró secuencia para trigger "${seqActiva.trigger}"`);
           continue;
@@ -322,9 +320,7 @@ async function processSequences() {
         }
       }
       if (actualizaciones) {
-        lead.secuenciasActivas = lead.secuenciasActivas.filter(
-          (item) => !item.completed
-        );
+        lead.secuenciasActivas = lead.secuenciasActivas.filter((item) => !item.completed);
         await db.collection("leads").doc(lead.id).update({
           secuenciasActivas: lead.secuenciasActivas,
         });
@@ -342,7 +338,9 @@ cron.schedule("* * * * *", () => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  connectToWhatsApp(businessId).catch((err) =>
-    console.error("Error al conectar WhatsApp en startup:", err)
-  );
+  // Para producción, ya NO se usará process.env.BUSINESS_ID;
+  // Se supone que el front envía el businessId en la query de cada solicitud.
+  // Aquí simplemente se conecta el WhatsApp para el negocio indicado en la query de la solicitud /api/whatsapp/connect.
+  // Si deseas conectar un negocio en particular al iniciar el servidor, debes manejarlo en el front (por ejemplo, después del login, 
+  // se llama a /api/whatsapp/connect con el businessId del usuario autenticado).
 });

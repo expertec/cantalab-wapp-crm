@@ -1,24 +1,29 @@
 // server/whatsappService.js
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { 
+  makeWASocket, 
+  useMultiFileAuthState, 
+  DisconnectReason, 
+  fetchLatestBaileysVersion 
+} from '@whiskeysockets/baileys';
 import QRCode from 'qrcode-terminal';
 import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
 import { db } from './firebaseAdmin.js';
 
-// Aquí mantenemos un objeto que mapea businessId a su conexión
+// Objeto que mapea businessId a su conexión
 const connections = {};
 
 // Función para crear o retornar una conexión para un businessId específico
 export async function connectToWhatsApp(businessId) {
   const localAuthFolder = `/var/data/${businessId}`;
-  
-  // Si ya existe conexión para este negocio, la retornamos
+
+  // Si ya existe una conexión para este negocio, la retornamos
   if (connections[businessId] && connections[businessId].whatsappSock) {
     console.log(`Ya existe conexión para el negocio ${businessId}`);
     return connections[businessId].whatsappSock;
   }
-  
+
   try {
     console.log("Verificando carpeta de autenticación en:", localAuthFolder);
     if (!fs.existsSync(localAuthFolder)) {
@@ -27,14 +32,14 @@ export async function connectToWhatsApp(businessId) {
     } else {
       console.log("Carpeta de autenticación existente:", localAuthFolder);
     }
-    
+
     console.log("Obteniendo estado de autenticación...");
     const { state, saveCreds } = await useMultiFileAuthState(localAuthFolder);
-    
+
     console.log("Obteniendo la última versión de Baileys...");
     const { version } = await fetchLatestBaileysVersion();
     console.log("Versión obtenida:", version);
-    
+
     console.log("Intentando conectar con WhatsApp para businessId:", businessId);
     const sock = makeWASocket({
       auth: state,
@@ -42,15 +47,16 @@ export async function connectToWhatsApp(businessId) {
       printQRInTerminal: true,
       version,
     });
-    
-    // Creamos el objeto de conexión para este businessId
+
+    // Almacenar la conexión bajo el businessId
     connections[businessId] = {
       whatsappSock: sock,
       latestQR: null,
       connectionStatus: "Desconectado",
+      businessId: businessId,
     };
-    
-    // Registrar los eventos en esta conexión
+
+    // Registrar eventos de conexión
     sock.ev.on('connection.update', (update) => {
       console.log("connection.update:", update);
       const { connection, lastDisconnect, qr } = update;
@@ -90,17 +96,17 @@ export async function connectToWhatsApp(businessId) {
         }
       }
     });
-    
+
     sock.ev.on('creds.update', (creds) => {
       console.log("Credenciales actualizadas para businessId", businessId, ":", creds);
       saveCreds();
     });
-    
-    // Registro y activación de leads se registrará en la conexión correspondiente.
+
+    // Evento para registrar y activar leads
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
-      
-      // Primero se obtiene la configuración global.
+
+      // Cargar configuración global
       let config = { autoSaveLeads: true, defaultTrigger: "NuevoLead" };
       try {
         const configSnap = await db.collection("config").doc("appConfig").get();
@@ -112,12 +118,12 @@ export async function connectToWhatsApp(businessId) {
       } catch (error) {
         console.error("Error al obtener configuración:", error);
       }
-      
+
       if (!config.autoSaveLeads) {
         console.log("Guardado automático de leads desactivado en configuración.");
         return;
       }
-      
+
       // Obtener triggers disponibles en la colección "secuencias"
       let secuenciasQuerySnapshot;
       try {
@@ -128,11 +134,12 @@ export async function connectToWhatsApp(businessId) {
       }
       const availableTriggers = secuenciasQuerySnapshot.docs.map(doc => doc.data().trigger);
       const triggerDefault = config.defaultTrigger || "NuevoLead";
-      
+
       for (const msg of m.messages) {
         // Procesar solo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
           const jid = msg.key.remoteJid;
+          // Ignorar mensajes de grupo
           if (jid.endsWith('@g.us')) {
             console.log("Mensaje de grupo recibido, se ignora.");
             continue;
@@ -194,7 +201,7 @@ export async function connectToWhatsApp(businessId) {
         }
       }
     });
-    
+
     console.log("Conexión de WhatsApp establecida para businessId", businessId, ", retornando socket.");
     return sock;
   } catch (error) {
@@ -203,12 +210,18 @@ export async function connectToWhatsApp(businessId) {
   }
 }
 
-export function getLatestQR() {
-  return latestQR;
+export function getLatestQR(businessId) {
+  if (connections[businessId]) {
+    return connections[businessId].latestQR;
+  }
+  return null;
 }
 
-export function getConnectionStatus() {
-  return connectionStatus;
+export function getConnectionStatus(businessId) {
+  if (connections[businessId]) {
+    return connections[businessId].connectionStatus;
+  }
+  return "Desconocido";
 }
 
 export function getWhatsAppSock(businessId) {
