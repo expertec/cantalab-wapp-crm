@@ -1,4 +1,3 @@
-// server/server.js
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -140,7 +139,6 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
   }
 });
 
-
 // Endpoint para enviar mensaje desde el frontend
 app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
@@ -274,55 +272,6 @@ async function procesarMensajePDFChatGPT(lead) {
     await db.collection('leads').doc(lead.id).update({ etiqueta: "planEnviado" });
   } catch (err) {
     console.error("Error procesando mensaje pdfChatGPT:", err);
-  }
-}
-
-/**
- * Función que procesa las secuencias activas para cada lead.
- * Recuerda que las secuencias son definidas en Firestore y cada mensaje tiene un delay.
- */
-async function processSequences() {
-  console.log("Ejecutando scheduler de secuencias...");
-  try {
-    const leadsSnapshot = await db.collection('leads')
-      .where('secuenciasActivas', '!=', null)
-      .get();
-
-    leadsSnapshot.forEach(async (docSnap) => {
-      const lead = { id: docSnap.id, ...docSnap.data() };
-      if (!lead.secuenciasActivas || lead.secuenciasActivas.length === 0) return;
-      let actualizaciones = false;
-      for (let i = 0; i < lead.secuenciasActivas.length; i++) {
-        const seqActiva = lead.secuenciasActivas[i];
-        const secSnapshot = await db.collection('secuencias')
-          .where('trigger', '==', seqActiva.trigger)
-          .get();
-        if (secSnapshot.empty) continue;
-        const secuencia = secSnapshot.docs[0].data();
-        const mensajes = secuencia.messages;
-        if (seqActiva.index >= mensajes.length) {
-          lead.secuenciasActivas[i] = null;
-          actualizaciones = true;
-          continue;
-        }
-        const mensaje = mensajes[seqActiva.index];
-        const startTime = new Date(seqActiva.startTime);
-        const envioProgramado = new Date(startTime.getTime() + mensaje.delay * 60000);
-        if (Date.now() >= envioProgramado.getTime()) {
-          await enviarMensaje(lead, mensaje);
-          seqActiva.index += 1;
-          actualizaciones = true;
-        }
-      }
-      if (actualizaciones) {
-        lead.secuenciasActivas = lead.secuenciasActivas.filter(item => item !== null);
-        await db.collection('leads').doc(lead.id).update({
-          secuenciasActivas: lead.secuenciasActivas
-        });
-      }
-    });
-  } catch (error) {
-    console.error("Error en processSequences:", error);
   }
 }
 

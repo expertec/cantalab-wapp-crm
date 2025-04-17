@@ -1,4 +1,3 @@
-// server/whatsappService.js
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode-terminal';
 import Pino from 'pino';
