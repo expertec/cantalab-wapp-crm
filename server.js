@@ -17,9 +17,6 @@ import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } 
 import { generarEstrategia } from './chatGpt.js';
 import { generatePDF } from './utils/generatePDF.js';
 
-// O, si prefieres usar el otro método:
-// import { generateStrategyPDF } from './utils/generateStrategyPDF.js';
-
 const app = express();
 const port = process.env.PORT || 3001;
 
@@ -77,7 +74,14 @@ app.get('/api/whatsapp/send/text', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
-    await sock.sendMessage(jid, { text: "Mensaje de prueba desde API (texto)" });
+    
+    // Implementar un timeout para evitar que el proceso se quede esperando indefinidamente
+    const sendMessagePromise = sock.sendMessage(jid, { text: "Mensaje de prueba desde API (texto)" });
+    
+    // Establecer un límite de tiempo de 10 segundos para la operación
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out')), 10000));
+    await Promise.race([sendMessagePromise, timeout]);
+
     res.json({ success: true, message: "Mensaje de texto enviado" });
   } catch (error) {
     console.error("Error enviando mensaje de texto:", error);
@@ -101,8 +105,10 @@ app.get('/api/whatsapp/send/image', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
-    // Se utiliza una URL de imagen de prueba
+
+    // Usar una URL de imagen de prueba
     await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
+
     res.json({ success: true, message: "Mensaje de imagen enviado" });
   } catch (error) {
     console.error("Error enviando mensaje de imagen:", error);
@@ -155,8 +161,12 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     }
     const jid = `${phone}@s.whatsapp.net`;
 
-    // Enviar el mensaje de texto a través de WhatsApp
-    await sock.sendMessage(jid, { text: message });
+    // Implementar un timeout para evitar que el proceso se quede esperando indefinidamente
+    const sendMessagePromise = sock.sendMessage(jid, { text: message });
+    
+    // Establecer un límite de tiempo de 10 segundos para la operación
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out')), 10000));
+    await Promise.race([sendMessagePromise, timeout]);
 
     res.json({ success: true, message: "Mensaje enviado a WhatsApp" });
   } catch (error) {
