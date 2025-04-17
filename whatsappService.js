@@ -4,6 +4,7 @@ import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
 import { db } from './firebaseAdmin.js';
+import { addDoc, collection } from 'firebase/firestore'; // Asegúrate de importar addDoc correctamente
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
@@ -111,7 +112,7 @@ export async function connectToWhatsApp() {
       }
       const availableTriggers = secuenciasQuerySnapshot.docs.map(doc => doc.data().trigger);
       const triggerDefault = config.defaultTrigger || "NuevoLead";
-      
+
       for (const msg of m.messages) {
         // Procesamos solo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
