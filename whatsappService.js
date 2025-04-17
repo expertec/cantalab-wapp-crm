@@ -3,8 +3,7 @@ import QRCode from 'qrcode-terminal';
 import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
-import { db } from './firebaseAdmin.js';
-import { addDoc, collection } from 'firebase/firestore'; // Asegúrate de importar addDoc correctamente
+import { db } from './firebaseAdmin.js';  // Usamos firebase-admin
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
@@ -181,10 +180,8 @@ export async function connectToWhatsApp() {
               timestamp: new Date(),
             };
 
-            await addDoc(
-              db.collection('leads').doc(jid).collection("messages"),
-              newMessage
-            );
+            // Usar el método de Firestore para guardar el mensaje con firebase-admin
+            await db.collection('leads').doc(jid).collection("messages").add(newMessage);
             console.log("Mensaje guardado en Firebase:", newMessage);
 
           } catch (error) {
@@ -193,6 +190,7 @@ export async function connectToWhatsApp() {
         }
       }
     });
+
     console.log("Conexión de WhatsApp establecida, retornando socket.");
     return sock;
   } catch (error) {
