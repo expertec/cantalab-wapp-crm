@@ -140,6 +140,34 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
   }
 });
 
+
+// Endpoint para enviar mensaje desde el frontend
+app.post('/api/whatsapp/send-message', async (req, res) => {
+  const { leadId, message } = req.body;
+
+  try {
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
+    }
+
+    let phone = leadId;
+    if (!phone.startsWith('521')) {
+      phone = `521${phone}`;
+    }
+    const jid = `${phone}@s.whatsapp.net`;
+
+    // Enviar el mensaje de texto a través de WhatsApp
+    await sock.sendMessage(jid, { text: message });
+
+    res.json({ success: true, message: "Mensaje enviado a WhatsApp" });
+  } catch (error) {
+    console.error("Error enviando mensaje de WhatsApp:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 /**
  * Función para enviar mensajes según el tipo.
  * Se ha incluido el caso "pdfChatGPT" que genera, guarda y envía el PDF.
