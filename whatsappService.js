@@ -171,8 +171,23 @@ export async function connectToWhatsApp() {
                 }
               }
             }
+
+            // Guardar el mensaje en la subcolección "messages" del lead
+            const messageContent = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
+            const newMessage = {
+              content: messageContent,
+              sender: "lead",
+              timestamp: new Date(),
+            };
+
+            await addDoc(
+              db.collection('leads').doc(jid).collection("messages"),
+              newMessage
+            );
+            console.log("Mensaje guardado en Firebase:", newMessage);
+
           } catch (error) {
-            console.error("Error registrando lead:", error);
+            console.error("Error procesando el mensaje del lead:", error);
           }
         }
       }
