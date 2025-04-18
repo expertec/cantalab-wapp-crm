@@ -116,13 +116,17 @@ export async function connectToWhatsApp() {
             continue;
           }
           try {
-            const leadRef = db.collection('leads').doc(jid);
-            const docSnap = await leadRef.get();
-            if (!docSnap.exists) {
-              const telefono = jid.split('@')[0];
+            let leadRef;
+            const leadId = jid.split('@')[0]; // Usamos solo el teléfono como ID del lead
+
+            // Buscamos el lead utilizando el número de teléfono sin importar el número
+            const leadSnap = await db.collection('leads').where('telefono', '==', leadId).get();
+
+            if (leadSnap.empty) {
               const nombre = msg.pushName || "Sin nombre";
               const etiquetas = [triggerDefault];
               const secuenciasAAgregar = [];
+
               etiquetas.forEach(tag => {
                 if (availableTriggers.includes(tag)) {
                   secuenciasAAgregar.push({
@@ -132,20 +136,22 @@ export async function connectToWhatsApp() {
                   });
                 }
               });
-              const nuevoLead = {
+
+              leadRef = db.collection('leads').doc();
+              await leadRef.set({
                 nombre,
-                telefono,
+                telefono: leadId,
                 fecha_creacion: new Date(),
                 estado: "nuevo",
                 etiquetas,
                 secuenciasActivas: secuenciasAAgregar,
                 source: "WhatsApp"
-              };
-              await leadRef.set(nuevoLead);
-              console.log("Nuevo lead guardado:", nuevoLead);
+              });
+              console.log("Nuevo lead guardado:", leadId);
             } else {
-              console.log("Lead ya existente:", jid);
-              const leadData = docSnap.data();
+              leadRef = leadSnap.docs[0].ref;
+              console.log("Lead ya existente:", leadId);
+              const leadData = leadSnap.docs[0].data();
               const secuencias = leadData.secuenciasActivas || [];
               if (!secuencias.some(seq => seq.trigger === triggerDefault)) {
                 if (availableTriggers.includes(triggerDefault)) {
@@ -160,7 +166,7 @@ export async function connectToWhatsApp() {
                     secuenciasActivas: secuencias,
                     etiquetas
                   });
-                  console.log("Secuencia activada para lead existente:", jid);
+                  console.log("Secuencia activada para lead existente:", leadId);
                 }
               }
             }
@@ -172,7 +178,7 @@ export async function connectToWhatsApp() {
               timestamp: new Date(),
             };
 
-            await db.collection('leads').doc(jid).collection("messages").add(newMessage);
+            await leadRef.collection("messages").add(newMessage);
             console.log("Mensaje guardado en Firebase:", newMessage);
 
           } catch (error) {
