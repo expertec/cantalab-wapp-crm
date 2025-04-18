@@ -146,7 +146,32 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
 
   try {
+    // Verificar si el lead tiene un número de WhatsApp registrado
+    const leadDoc = await db.collection('leads').doc(leadId).get();
+    if (!leadDoc.exists) {
+      return res.status(404).json({ error: "Lead no encontrado" });
+    }
+    const leadData = leadDoc.data();
+    const phone = leadData.telefono;
+    
+    // Verificar si el número ha cambiado
+    let number = phone;
+    if (!number.startsWith('521')) {
+      number = `521${number}`;
+    }
+    const jid = `${number}@s.whatsapp.net`;
+
+    // Guardar el mensaje en Firebase
+    const newMessage = {
+      content: message,
+      sender: "business",
+      timestamp: new Date(),
+    };
+    await db.collection('leads').doc(leadId).collection('messages').add(newMessage);
+    
+    // Enviar el mensaje a través de WhatsApp
     const result = await sendMessageToLead(leadId, message);
+    
     res.json(result);
   } catch (error) {
     console.error("Error enviando mensaje de WhatsApp:", error);
