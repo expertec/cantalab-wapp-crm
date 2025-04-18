@@ -82,7 +82,6 @@ export async function connectToWhatsApp() {
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
 
-      // Primero, obtenemos la configuración global
       let config = { autoSaveLeads: true, defaultTrigger: "NuevoLead" };
       try {
         const configSnap = await db.collection("config").doc("appConfig").get();
@@ -94,14 +93,12 @@ export async function connectToWhatsApp() {
       } catch (error) {
         console.error("Error al obtener configuración:", error);
       }
-      
-      // Si no está activado el guardado automático, salimos
+
       if (!config.autoSaveLeads) {
         console.log("Guardado automático de leads desactivado en configuración.");
         return;
       }
 
-      // Obtenemos los triggers disponibles en la colección "secuencias"
       let secuenciasQuerySnapshot;
       try {
         secuenciasQuerySnapshot = await db.collection("secuencias").get();
@@ -113,10 +110,8 @@ export async function connectToWhatsApp() {
       const triggerDefault = config.defaultTrigger || "NuevoLead";
 
       for (const msg of m.messages) {
-        // Procesamos solo mensajes entrantes (no enviados por nosotros)
         if (msg.key && !msg.key.fromMe) {
           const jid = msg.key.remoteJid;
-          // Ignorar mensajes de grupos
           if (jid.endsWith('@g.us')) {
             console.log("Mensaje de grupo recibido, se ignora.");
             continue;
@@ -153,7 +148,6 @@ export async function connectToWhatsApp() {
               console.log("Lead ya existente:", jid);
               const leadData = docSnap.data();
               const secuencias = leadData.secuenciasActivas || [];
-              // Si no tiene activada la secuencia con el trigger configurado, se agrega
               if (!secuencias.some(seq => seq.trigger === triggerDefault)) {
                 if (availableTriggers.includes(triggerDefault)) {
                   secuencias.push({
@@ -172,7 +166,6 @@ export async function connectToWhatsApp() {
               }
             }
 
-            // Guardar el mensaje en la subcolección "messages" del lead
             const messageContent = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
             const newMessage = {
               content: messageContent,
@@ -180,7 +173,6 @@ export async function connectToWhatsApp() {
               timestamp: new Date(),
             };
 
-            // Usar el método de Firestore para guardar el mensaje con firebase-admin
             await db.collection('leads').doc(jid).collection("messages").add(newMessage);
             console.log("Mensaje guardado en Firebase:", newMessage);
 
@@ -196,6 +188,29 @@ export async function connectToWhatsApp() {
   } catch (error) {
     console.error("Error al conectar con WhatsApp:", error);
     throw error;
+  }
+}
+
+// Nueva función para enviar mensajes
+export async function sendMessageToLead(leadId, messageContent) {
+  try {
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      throw new Error('No hay conexión activa con WhatsApp');
+    }
+
+    let phone = leadId;
+    if (!phone.startsWith('521')) {
+      phone = `521${phone}`;
+    }
+    const jid = `${phone}@s.whatsapp.net`;
+
+    await sock.sendMessage(jid, { text: messageContent });
+    console.log(`Mensaje enviado a ${jid}: ${messageContent}`);
+    return { success: true, message: 'Mensaje enviado a WhatsApp' };
+  } catch (error) {
+    console.error("Error enviando mensaje de WhatsApp:", error);
+    throw new Error(`Error enviando mensaje: ${error.message}`);
   }
 }
 

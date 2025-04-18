@@ -291,6 +291,5 @@ cron.schedule('* * * * *', () => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  // Conectar a WhatsApp al iniciar el servidor
   connectToWhatsApp().catch(err => console.error("Error al conectar WhatsApp en startup:", err));
 });
