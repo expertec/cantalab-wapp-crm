@@ -141,25 +141,17 @@ app.get('/api/whatsapp/send/audio', async (req, res) => {
   }
 });
 
-// Endpoint para enviar mensaje desde el frontend
 app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
 
   try {
-    console.log(`Received message for leadId: ${leadId}`);
-    
     // Verificar si el lead tiene un número de WhatsApp registrado
     const leadDoc = await db.collection('leads').doc(leadId).get();
     if (!leadDoc.exists) {
-      console.error(`Lead with ID ${leadId} not found`);
       return res.status(404).json({ error: "Lead no encontrado" });
     }
-
     const leadData = leadDoc.data();
-    console.log(`Lead data: ${JSON.stringify(leadData)}`);
-
     const telefono = leadData.telefono;  // Usamos el campo "telefono" en lugar de "phone"
-    console.log(`Telefono for leadId ${leadId}: ${telefono}`);
     
     // Verificar si el número ha cambiado
     let number = telefono;
@@ -167,7 +159,6 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
-    console.log(`Sending message to: ${jid}`);
 
     // Guardar el mensaje en Firebase también
     const newMessage = {
@@ -175,12 +166,10 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
       sender: "business",
       timestamp: new Date(),
     };
-    console.log(`Saving message to Firebase: ${JSON.stringify(newMessage)}`);
     await db.collection('leads').doc(leadId).collection('messages').add(newMessage);
-
+    
     // Enviar el mensaje a través de WhatsApp
     const result = await sendMessageToLead(leadId, message);
-    console.log("WhatsApp message sent:", result);
     
     res.json(result);
   } catch (error) {
@@ -188,6 +177,7 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 
 // Función para procesar la secuencia de mensajes
 async function processSequences() {
