@@ -13,7 +13,7 @@ dotenv.config();
 import { db } from './firebaseAdmin.js'; // Usamos firebase-admin
 
 // Importar integración con WhatsApp y funciones para PDF y estrategia
-import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock, sendMessageToLead } from './whatsappService.js';
+import { connectToWhatsApp, getLatestQR, getConnectionStatus, sendMessageToLead } from './whatsappService.js';
 import { generarEstrategia } from './chatGpt.js';
 import { generatePDF } from './utils/generatePDF.js';
 
@@ -58,100 +58,25 @@ app.get('/api/whatsapp/connect', async (req, res) => {
   }
 });
 
-// Endpoint para enviar mensaje de texto
-app.get('/api/whatsapp/send/text', async (req, res) => {
-  try {
-    const phone = req.query.phone;
-    if (!phone) {
-      return res.status(400).json({ error: "El parámetro phone es requerido" });
-    }
-    const sock = getWhatsAppSock();
-    if (!sock) {
-      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
-    }
-    let number = phone;
-    if (!number.startsWith('521')) {
-      number = `521${number}`;
-    }
-    const jid = `${number}@s.whatsapp.net`;
-
-    const sendMessagePromise = sock.sendMessage(jid, { text: "Mensaje de prueba desde API (texto)" });
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out')), 10000));
-    await Promise.race([sendMessagePromise, timeout]);
-
-    res.json({ success: true, message: "Mensaje de texto enviado" });
-  } catch (error) {
-    console.error("Error enviando mensaje de texto:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint para enviar mensaje de imagen
-app.get('/api/whatsapp/send/image', async (req, res) => {
-  try {
-    const phone = req.query.phone;
-    if (!phone) {
-      return res.status(400).json({ error: "El parámetro phone es requerido" });
-    }
-    const sock = getWhatsAppSock();
-    if (!sock) {
-      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
-    }
-    let number = phone;
-    if (!number.startsWith('521')) {
-      number = `521${number}`;
-    }
-    const jid = `${number}@s.whatsapp.net`;
-
-    await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
-
-    res.json({ success: true, message: "Mensaje de imagen enviado" });
-  } catch (error) {
-    console.error("Error enviando mensaje de imagen:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint para enviar mensaje de audio
-app.get('/api/whatsapp/send/audio', async (req, res) => {
-  try {
-    const phone = req.query.phone;
-    if (!phone) {
-      return res.status(400).json({ error: "El parámetro phone es requerido" });
-    }
-    const sock = getWhatsAppSock();
-    if (!sock) {
-      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
-    }
-    let number = phone;
-    if (!number.startsWith('521')) {
-      number = `521${number}`;
-    }
-    const jid = `${number}@s.whatsapp.net`;
-    await sock.sendMessage(jid, {
-      audio: { url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
-      mimetype: "audio/mp4",
-      fileName: "prueba.m4a",
-      ptt: true
-    });
-    res.json({ success: true, message: "Mensaje de audio enviado" });
-  } catch (error) {
-    console.error("Error enviando mensaje de audio:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
+// Endpoint para enviar mensaje desde el frontend
 app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
 
   try {
+    console.log(`Received message for leadId: ${leadId}`);
+    
     // Verificar si el lead tiene un número de WhatsApp registrado
     const leadDoc = await db.collection('leads').doc(leadId).get();
     if (!leadDoc.exists) {
+      console.error(`Lead with ID ${leadId} not found`);
       return res.status(404).json({ error: "Lead no encontrado" });
     }
+
     const leadData = leadDoc.data();
+    console.log(`Lead data: ${JSON.stringify(leadData)}`);
+
     const telefono = leadData.telefono;  // Usamos el campo "telefono" en lugar de "phone"
+    console.log(`Telefono for leadId ${leadId}: ${telefono}`);
     
     // Verificar si el número ha cambiado
     let number = telefono;
@@ -159,6 +84,7 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
       number = `521${number}`;
     }
     const jid = `${number}@s.whatsapp.net`;
+    console.log(`Sending message to: ${jid}`);
 
     // Guardar el mensaje en Firebase también
     const newMessage = {
@@ -166,26 +92,18 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
       sender: "business",
       timestamp: new Date(),
     };
+    console.log(`Saving message to Firebase: ${JSON.stringify(newMessage)}`);
     await db.collection('leads').doc(leadId).collection('messages').add(newMessage);
-    
+
     // Enviar el mensaje a través de WhatsApp
     const result = await sendMessageToLead(leadId, message);
+    console.log("WhatsApp message sent:", result);
     
     res.json(result);
   } catch (error) {
     console.error("Error enviando mensaje de WhatsApp:", error);
     res.status(500).json({ error: error.message });
   }
-});
-
-
-// Función para procesar la secuencia de mensajes
-async function processSequences() {
-  // Código de tu lógica de secuencias, si lo tienes
-}
-
-cron.schedule('* * * * *', () => {
-  processSequences();
 });
 
 app.listen(port, () => {
