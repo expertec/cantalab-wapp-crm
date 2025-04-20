@@ -17,13 +17,13 @@ try {
   const fileData = fs.readFileSync(firebaseKeyPath, 'utf8');
   serviceAccount = JSON.parse(fileData);
 } catch (error) {
-  throw new Error("Error leyendo o parseando el archivo secreto: " + error.message);
+  throw new Error('Error leyendo o parseando el archivo secreto: ' + error.message);
 }
 
 // Inicializa Firebase Admin con las credenciales y el bucket de Storage
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  storageBucket: 'app-invita.firebasestorage.app'
+  storageBucket: 'cantalab-crm.firebasestorage.app'
 });
 
 // Obtén la instancia de Firestore
