@@ -1,5 +1,4 @@
 // server/scheduler.js
-import cron from 'node-cron';
 import { db } from './firebaseAdmin.js';
 import { getWhatsAppSock } from './whatsappService.js';
 import axios from 'axios';
@@ -10,13 +9,13 @@ import path from 'path';
  * {{campo}} se sustituye por leadData.campo si existe.
  */
 function replacePlaceholders(template, leadData) {
-  return template.replace(/\{\{(\w+)\}\}/g, (match, fieldName) => {
-    return leadData[fieldName] || match;
-  });
+  return template.replace(/\{\{(\w+)\}\}/g, (_, field) => leadData[field] || _);
 }
 
 /**
  * Envía un mensaje de WhatsApp según su tipo: texto, audio o imagen.
+ * Para audios, se envía como nota de voz (ptt) usando la URL directa,
+ * lo que muestra la waveform nativa en WhatsApp.
  */
 async function enviarMensaje(lead, mensaje) {
   try {
@@ -36,19 +35,13 @@ async function enviarMensaje(lead, mensaje) {
         await sock.sendMessage(jid, { text: contenidoFinal });
         break;
 
-        case 'audio':
-  try {
-    // Envía como nota de voz usando la URL directa para que WhatsApp muestre la waveform nativa
-    await sock.sendMessage(jid, {
-      audio: { url: contenidoFinal },
-      ptt: true
-    });
-  } catch (err) {
-    console.error("Error al enviar audio como nota de voz:", err);
-  }
-  break;
-
-        
+      case 'audio':
+        // Enviar como nota de voz usando URL para que WhatsApp muestre waveform
+        await sock.sendMessage(jid, {
+          audio: { url: contenidoFinal },
+          ptt: true
+        });
+        break;
 
       case 'imagen':
         await sock.sendMessage(jid, { image: { url: contenidoFinal } });
@@ -66,7 +59,7 @@ async function enviarMensaje(lead, mensaje) {
 
 /**
  * Procesa las secuencias activas de cada lead.
- * Lee triggers, calcula delays y envía mensajes programados.
+ * Lee triggers, calcula delays, envía mensajes y añade una notificación en Firebase.
  */
 async function processSequences() {
   console.log("Ejecutando scheduler de secuencias...");
@@ -74,6 +67,7 @@ async function processSequences() {
     const leadsSnapshot = await db.collection('leads')
       .where('secuenciasActivas', '!=', null)
       .get();
+
     console.log(`Se encontraron ${leadsSnapshot.size} leads con secuencias activas`);
 
     for (const docSnap of leadsSnapshot.docs) {
@@ -91,6 +85,7 @@ async function processSequences() {
 
         const secuencia = seqSnapshot.docs[0].data();
         const mensajes = secuencia.messages;
+
         if (seqActiva.index >= mensajes.length) {
           seqActiva.completed = true;
           actualizaciones = true;
@@ -98,11 +93,22 @@ async function processSequences() {
         }
 
         const mensaje = mensajes[seqActiva.index];
-        const startTime = new Date(seqActiva.startTime);
-        const envioProgramado = new Date(startTime.getTime() + mensaje.delay * 60000);
+        const startTime = new Date(seqActiva.startTime).getTime() + mensaje.delay * 60000;
 
-        if (Date.now() >= envioProgramado.getTime()) {
+        if (Date.now() >= startTime) {
+          // Enviar el mensaje por WhatsApp
           await enviarMensaje(lead, mensaje);
+
+          // Guardar notificación en Firebase (chat history)
+          await db.collection('leads')
+            .doc(lead.id)
+            .collection('messages')
+            .add({
+              content: `Se envio el ${mensaje.type} de la secuencia ${trigger}`,
+              sender: 'system',
+              timestamp: new Date()
+            });
+
           seqActiva.index += 1;
           actualizaciones = true;
         }
@@ -110,9 +116,9 @@ async function processSequences() {
 
       if (actualizaciones) {
         // Filtrar secuencias completadas
-        const nuevas = lead.secuenciasActivas.filter(seq => !seq.completed);
+        const restantes = lead.secuenciasActivas.filter(seq => !seq.completed);
         await db.collection('leads').doc(lead.id).update({
-          secuenciasActivas: nuevas
+          secuenciasActivas: restantes
         });
         console.log(`Lead ${lead.id} actualizado con nuevas secuencias`);
       }
