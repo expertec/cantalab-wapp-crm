@@ -16,6 +16,7 @@ import {
   getConnectionStatus,
   sendMessageToLead
 } from './whatsappService.js';
+import { processSequences } from './scheduler.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -23,6 +24,7 @@ const port = process.env.PORT || 3001;
 app.use(cors());
 app.use(bodyParser.json());
 
+// Endpoint para consultar el estado de WhatsApp (QR y conexión)
 app.get('/api/whatsapp/status', (req, res) => {
   res.json({
     status: getConnectionStatus(),
@@ -30,6 +32,7 @@ app.get('/api/whatsapp/status', (req, res) => {
   });
 });
 
+// Endpoint para enviar mensaje de WhatsApp
 app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
 
@@ -59,7 +62,7 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     };
     await db.collection('leads').doc(leadId).collection('messages').add(newMessage);
 
-    // --- FIX: pasamos el número, NO el leadId ---
+    // Enviamos el mensaje por WhatsApp
     const result = await sendMessageToLead(number, message);
     console.log("WhatsApp message sent:", result);
 
@@ -70,10 +73,13 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
   }
 });
 
+// Scheduler: ejecuta las secuencias activas cada minuto
 cron.schedule('* * * * *', () => {
-  // tu lógica de secuencias...
+  console.log('Ejecutando prosesSequences a las', new Date().toLocaleTimeString());
+  processSequences();
 });
 
+// Arranca el servidor y conecta WhatsApp
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
   connectToWhatsApp().catch(err =>
