@@ -87,17 +87,36 @@ export async function connectToWhatsApp() {
           try {
             const leadRef = db.collection('leads').doc(jid);
             const docSnap = await leadRef.get();
+
+            // Obtener configuración global
+            const configSnap = await db.collection('config').doc('appConfig').get();
+            const cfg = configSnap.exists ? configSnap.data() : { autoSaveLeads: true, defaultTrigger: 'NuevoLead' };
+
             if (!docSnap.exists) {
               const telefono = jid.split('@')[0];
               const nombre = msg.pushName || "Sin nombre";
-              await leadRef.set({
-                nombre,
-                telefono,
-                fecha_creacion: new Date(),
-                estado: 'nuevo',
-                source: 'WhatsApp'
-              });
-              console.log("Nuevo lead guardado:", telefono);
+
+              if (cfg.autoSaveLeads) {
+                // Inicializar secuencia activa con trigger predeterminado
+                const secuenciasActivas = [{
+                  trigger: cfg.defaultTrigger || 'NuevoLead',
+                  startTime: new Date().toISOString(),
+                  index: 0
+                }];
+
+                await leadRef.set({
+                  nombre,
+                  telefono,
+                  fecha_creacion: new Date(),
+                  estado: 'nuevo',
+                  source: 'WhatsApp',
+                  secuenciasActivas
+                });
+
+                console.log("Nuevo lead guardado con secuencia automática:", telefono);
+              } else {
+                console.log("AutoSaveLeads deshabilitado, no se guarda el lead:", telefono);
+              }
             }
 
             let mediaType = null;
