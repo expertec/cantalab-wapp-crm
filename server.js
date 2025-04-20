@@ -13,7 +13,7 @@ dotenv.config();
 import { db } from './firebaseAdmin.js'; // Usamos firebase-admin
 
 // Importar integración con WhatsApp y funciones para PDF y estrategia
-import { connectToWhatsApp, getLatestQR, getConnectionStatus, sendMessageToLead } from './whatsappService.js';
+import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock, sendMessageToLead } from './whatsappService.js';
 import { generarEstrategia } from './chatGpt.js';
 import { generatePDF } from './utils/generatePDF.js';
 
@@ -104,6 +104,15 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     console.error("Error enviando mensaje de WhatsApp:", error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// Función para procesar la secuencia de mensajes
+async function processSequences() {
+  // Código de tu lógica de secuencias, si lo tienes
+}
+
+cron.schedule('* * * * *', () => {
+  processSequences();
 });
 
 app.listen(port, () => {

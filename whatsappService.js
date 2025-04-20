@@ -78,6 +78,110 @@ export async function connectToWhatsApp() {
       saveCreds();
     });
 
+    sock.ev.on('messages.upsert', async (m) => {
+      console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
+
+      let config = { autoSaveLeads: true, defaultTrigger: "NuevoLead" };
+      try {
+        const configSnap = await db.collection("config").doc("appConfig").get();
+        if (configSnap.exists) {
+          config = { ...config, ...configSnap.data() };
+        } else {
+          console.log("No se encontró 'appConfig', usando valores por defecto.");
+        }
+      } catch (error) {
+        console.error("Error al obtener configuración:", error);
+      }
+
+      if (!config.autoSaveLeads) {
+        console.log("Guardado automático de leads desactivado en configuración.");
+        return;
+      }
+
+      let secuenciasQuerySnapshot;
+      try {
+        secuenciasQuerySnapshot = await db.collection("secuencias").get();
+      } catch (err) {
+        console.error("Error al obtener secuencias:", err);
+        return;
+      }
+      const availableTriggers = secuenciasQuerySnapshot.docs.map(doc => doc.data().trigger);
+      const triggerDefault = config.defaultTrigger || "NuevoLead";
+
+      for (const msg of m.messages) {
+        if (msg.key && !msg.key.fromMe) {
+          const jid = msg.key.remoteJid;
+          if (jid.endsWith('@g.us')) {
+            console.log("Mensaje de grupo recibido, se ignora.");
+            continue;
+          }
+          try {
+            const leadRef = db.collection('leads').doc(jid);
+            const docSnap = await leadRef.get();
+            if (!docSnap.exists) {
+              const telefono = jid.split('@')[0];
+              const nombre = msg.pushName || "Sin nombre";
+              const etiquetas = [triggerDefault];
+              const secuenciasAAgregar = [];
+              etiquetas.forEach(tag => {
+                if (availableTriggers.includes(tag)) {
+                  secuenciasAAgregar.push({
+                    trigger: tag,
+                    startTime: new Date().toISOString(),
+                    index: 0
+                  });
+                }
+              });
+              const nuevoLead = {
+                nombre,
+                telefono,
+                fecha_creacion: new Date(),
+                estado: "nuevo",
+                etiquetas,
+                secuenciasActivas: secuenciasAAgregar,
+                source: "WhatsApp"
+              };
+              await leadRef.set(nuevoLead);
+              console.log("Nuevo lead guardado:", nuevoLead);
+            } else {
+              console.log("Lead ya existente:", jid);
+              const leadData = docSnap.data();
+              const secuencias = leadData.secuenciasActivas || [];
+              if (!secuencias.some(seq => seq.trigger === triggerDefault)) {
+                if (availableTriggers.includes(triggerDefault)) {
+                  secuencias.push({
+                    trigger: triggerDefault,
+                    startTime: new Date().toISOString(),
+                    index: 0
+                  });
+                  const etiquetas = leadData.etiquetas || [];
+                  if (!etiquetas.includes(triggerDefault)) etiquetas.push(triggerDefault);
+                  await leadRef.update({
+                    secuenciasActivas: secuencias,
+                    etiquetas
+                  });
+                  console.log("Secuencia activada para lead existente:", jid);
+                }
+              }
+            }
+
+            const messageContent = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
+            const newMessage = {
+              content: messageContent,
+              sender: "lead",
+              timestamp: new Date(),
+            };
+
+            await db.collection('leads').doc(jid).collection("messages").add(newMessage);
+            console.log("Mensaje guardado en Firebase:", newMessage);
+
+          } catch (error) {
+            console.error("Error procesando el mensaje del lead:", error);
+          }
+        }
+      }
+    });
+
     console.log("Conexión de WhatsApp establecida, retornando socket.");
     return sock;
   } catch (error) {
@@ -89,7 +193,7 @@ export async function connectToWhatsApp() {
 // Nueva función para enviar mensajes
 export async function sendMessageToLead(leadId, messageContent) {
   try {
-    const sock = whatsappSock;
+    const sock = getWhatsAppSock();
     if (!sock) {
       throw new Error('No hay conexión activa con WhatsApp');
     }
