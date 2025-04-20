@@ -37,21 +37,17 @@ async function enviarMensaje(lead, mensaje) {
         break;
 
         case 'audio':
-          try {
-            // Descarga el audio
-            const response = await axios.get(contenidoFinal, { responseType: 'arraybuffer' });
-            const audioBuffer = Buffer.from(response.data, 'binary');
-            // Elige MIME según extensión
-            const ext = path.extname(contenidoFinal).toLowerCase();
-            let mime = 'audio/mp4';
-            if (ext === '.ogg') mime = 'audio/ogg';
-            else if (ext === '.mp3') mime = 'audio/mp3';
-            // Envía el mensaje de audio
-            await sock.sendMessage(jid, { audio: audioBuffer, mimetype: mime, ptt: false });
-          } catch (err) {
-            console.error("Error al descargar o enviar audio:", err);
-          }
-          break;
+  try {
+    // Envía como nota de voz usando la URL directa para que WhatsApp muestre la waveform nativa
+    await sock.sendMessage(jid, {
+      audio: { url: contenidoFinal },
+      ptt: true
+    });
+  } catch (err) {
+    console.error("Error al enviar audio como nota de voz:", err);
+  }
+  break;
+
         
 
       case 'imagen':
