@@ -1,14 +1,25 @@
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+// whatsappService.js
+import {
+  makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  downloadMediaMessage
+} from '@whiskeysockets/baileys';
 import QRCode from 'qrcode-terminal';
 import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import admin from 'firebase-admin';
 import { db } from './firebaseAdmin.js';
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
 let whatsappSock = null;
 const localAuthFolder = '/var/data';
+
+// Asegúrate de que en firebaseAdmin.js ya hayas hecho admin.initializeApp(...)
+const bucket = admin.storage().bucket();
 
 export async function connectToWhatsApp() {
   try {
@@ -52,7 +63,7 @@ export async function connectToWhatsApp() {
         if (reason === DisconnectReason.loggedOut) {
           // Limpiar credenciales
           if (fs.existsSync(localAuthFolder)) {
-            fs.readdirSync(localAuthFolder).forEach(file => 
+            fs.readdirSync(localAuthFolder).forEach(file =>
               fs.rmSync(path.join(localAuthFolder, file), { recursive: true, force: true })
             );
             console.log("Estado de autenticación limpiado.");
@@ -68,35 +79,76 @@ export async function connectToWhatsApp() {
 
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
-      // Procesar solamente mensajes entrantes
       for (const msg of m.messages) {
         if (msg.key && !msg.key.fromMe) {
           const jid = msg.key.remoteJid;
           if (jid.endsWith('@g.us')) continue; // ignorar grupos
 
-          // Guardar lead y mensaje en Firestore
           try {
             const leadRef = db.collection('leads').doc(jid);
             const docSnap = await leadRef.get();
-
             if (!docSnap.exists) {
               const telefono = jid.split('@')[0];
               const nombre = msg.pushName || "Sin nombre";
-              await leadRef.set({ nombre, telefono, fecha_creacion: new Date(), estado: 'nuevo', source: 'WhatsApp' });
+              await leadRef.set({
+                nombre,
+                telefono,
+                fecha_creacion: new Date(),
+                estado: 'nuevo',
+                source: 'WhatsApp'
+              });
               console.log("Nuevo lead guardado:", telefono);
             }
 
-            const content = msg.message?.conversation 
-              || msg.message?.extendedTextMessage?.text 
-              || '';
+            let mediaType = null;
+            let mediaUrl = null;
+            let content = '';
 
-            await leadRef.collection('messages').add({
+            // Imagen
+            if (msg.message.imageMessage) {
+              mediaType = 'image';
+              const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
+              const fileName = `images/${jid}-${Date.now()}.jpg`;
+              const file = bucket.file(fileName);
+              await file.save(buffer, { contentType: 'image/jpeg' });
+              const [url] = await file.getSignedUrl({
+                action: 'read',
+                expires: '03-01-2500'
+              });
+              mediaUrl = url;
+              console.log("Imagen guardada en Storage:", fileName);
+            }
+            // Audio
+            else if (msg.message.audioMessage) {
+              mediaType = 'audio';
+              const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
+              const fileName = `audios/${jid}-${Date.now()}.ogg`;
+              const file = bucket.file(fileName);
+              await file.save(buffer, { contentType: 'audio/ogg' });
+              const [url] = await file.getSignedUrl({
+                action: 'read',
+                expires: '03-01-2500'
+              });
+              mediaUrl = url;
+              console.log("Audio guardado en Storage:", fileName);
+            }
+            // Texto
+            else {
+              content = msg.message.conversation
+                || msg.message.extendedTextMessage?.text
+                || '';
+            }
+
+            const newMessage = {
               content,
+              mediaType,
+              mediaUrl,
               sender: 'lead',
               timestamp: new Date(),
-            });
+            };
 
-            console.log("Mensaje de lead guardado en Firebase:", content);
+            await leadRef.collection('messages').add(newMessage);
+            console.log("Mensaje de lead guardado en Firebase:", newMessage);
           } catch (err) {
             console.error("Error procesando mensaje entrante:", err);
           }
