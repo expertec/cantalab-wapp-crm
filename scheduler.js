@@ -1,4 +1,5 @@
 // server/scheduler.js
+import cron from 'node-cron';
 import { db } from './firebaseAdmin.js';
 import { getWhatsAppSock } from './whatsappService.js';
 
@@ -7,58 +8,67 @@ import { getWhatsAppSock } from './whatsappService.js';
  * {{campo}} se sustituye por leadData.campo si existe.
  */
 function replacePlaceholders(template, leadData) {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, field) => leadData[field] || _);
+  return template.replace(/\{\{(\w+)\}\}/g, (_, field) => leadData[field] || '');
 }
 
 /**
  * Envía un mensaje de WhatsApp según su tipo.
  */
 async function enviarMensaje(lead, mensaje) {
-  const sock = getWhatsAppSock();
-  if (!sock) return console.error("No hay conexión activa con WhatsApp.");
+  try {
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      console.error("No hay conexión activa con WhatsApp.");
+      return;
+    }
 
-  let phone = lead.telefono;
-  if (!phone.startsWith('521')) phone = `521${phone}`;
-  const jid = `${phone}@s.whatsapp.net`;
+    let phone = lead.telefono;
+    if (!phone.startsWith('521')) phone = `521${phone}`;
+    const jid = `${phone}@s.whatsapp.net`;
 
-  switch (mensaje.type) {
-    case 'texto': {
-      if (mensaje.contenido.includes('{{telefono}}') || mensaje.contenido.includes('{{nombre}}')) {
-        return;
+    switch (mensaje.type) {
+      case 'texto': {
+        const text = replacePlaceholders(mensaje.contenido, lead).trim();
+        if (text) await sock.sendMessage(jid, { text });
+        break;
       }
-      const text = replacePlaceholders(mensaje.contenido, lead).trim();
-      if (text) await sock.sendMessage(jid, { text });
-      break;
-    }
-    case 'formulario': {
-      const base = process.env.FRONTEND_URL || 'http://localhost:3000';
-      const nombreEnc = encodeURIComponent(lead.nombre || '');
-      const url = `${base}/formulario-cancion?phone=${phone}&name=${nombreEnc}`;
-      const intro = (mensaje.contenido || '').replace(/\r?\n/g, ' ').trim();
-      const text = intro ? `${intro} ${url}` : url;
-      await sock.sendMessage(jid, { text });
-      break;
-    }
-    case 'audio':
-      await sock.sendMessage(jid, {
-        audio: { url: replacePlaceholders(mensaje.contenido, lead) },
-        ptt: true
-      });
-      break;
-    case 'imagen':
-      await sock.sendMessage(jid, {
-        image: { url: replacePlaceholders(mensaje.contenido, lead) }
-      });
-      break;
-    default:
-      console.warn(`Tipo de mensaje desconocido: ${mensaje.type}`);
-  }
+      case 'formulario': {
+        const base = process.env.FRONTEND_URL || 'http://localhost:3000';
+        const nombreEnc = encodeURIComponent(lead.nombre || '');
+        const url = `${base}/formulario-cancion?phone=${phone}&name=${nombreEnc}`;
 
-  console.log(`Mensaje de tipo "${mensaje.type}" enviado a ${lead.telefono}`);
+        // Aplicamos replacePlaceholders al intro para eliminar {{telefono}}/{{nombre}}
+        const intro = replacePlaceholders(mensaje.contenido || '', lead)
+          .replace(/\r?\n/g, ' ')
+          .trim();
+
+        const text = intro ? `${intro} ${url}` : url;
+        await sock.sendMessage(jid, { text });
+        break;
+      }
+      case 'audio':
+        await sock.sendMessage(jid, {
+          audio: { url: replacePlaceholders(mensaje.contenido, lead) },
+          ptt: true
+        });
+        break;
+      case 'imagen':
+        await sock.sendMessage(jid, {
+          image: { url: replacePlaceholders(mensaje.contenido, lead) }
+        });
+        break;
+      default:
+        console.warn(`Tipo de mensaje desconocido: ${mensaje.type}`);
+    }
+
+    console.log(`Mensaje de tipo "${mensaje.type}" enviado a ${lead.telefono}`);
+  } catch (error) {
+    console.error("Error al enviar mensaje:", error);
+  }
 }
 
 /**
- * Recorre y ejecuta las secuencias activas.
+ * Recorre y ejecuta las secuencias activas de cada lead.
  */
 async function processSequences() {
   console.log("Ejecutando scheduler de secuencias...");
@@ -70,7 +80,7 @@ async function processSequences() {
 
     for (const docSnap of leadsSnapshot.docs) {
       const lead = { id: docSnap.id, ...docSnap.data() };
-      if (!Array.isArray(lead.secuenciasActivas) || !lead.secuenciasActivas.length) continue;
+      if (!Array.isArray(lead.secuenciasActivas) || lead.secuenciasActivas.length === 0) continue;
 
       let updated = false;
 
@@ -145,17 +155,19 @@ async function processTagTimeouts() {
 
       const last = msgsSnap.docs[0].data();
       const hrs = (now - last.timestamp.toDate().getTime()) / 36e5;
-      const tags = Array.isArray(lead.etiquetas) ? [...lead.etiquetas] : [];
+      const etiquetas = Array.isArray(lead.etiquetas) ? [...lead.etiquetas] : [];
       let changed = false;
 
-      if (tagAfter24h && hrs >= 24 && !tags.includes(tagAfter24h)) {
-        tags.push(tagAfter24h); changed = true;
+      if (tagAfter24h && hrs >= 24 && !etiquetas.includes(tagAfter24h)) {
+        etiquetas.push(tagAfter24h);
+        changed = true;
       }
-      if (tagAfter48h && hrs >= 48 && !tags.includes(tagAfter48h)) {
-        tags.push(tagAfter48h); changed = true;
+      if (tagAfter48h && hrs >= 48 && !etiquetas.includes(tagAfter48h)) {
+        etiquetas.push(tagAfter48h);
+        changed = true;
       }
       if (changed) {
-        await db.collection('leads').doc(lead.id).update({ etiquetas: tags });
+        await db.collection('leads').doc(lead.id).update({ etiquetas });
       }
     }
   } catch (err) {
