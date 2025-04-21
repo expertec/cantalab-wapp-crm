@@ -185,6 +185,8 @@ async function processTagTimeouts() {
     console.error("Error en processTagTimeouts:", error);
   }
 }
+
+
 // Cron: ejecutar processTagTimeouts cada hora (minuto 0)
 cron.schedule('0 * * * *', () => {
   processTagTimeouts().catch(err => console.error(err));
