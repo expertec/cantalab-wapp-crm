@@ -30,8 +30,9 @@ async function enviarMensaje(lead, mensaje) {
 
     switch (mensaje.type) {
       case 'texto': {
+        // Reemplaza y limpia
         const text = replacePlaceholders(mensaje.contenido, lead).trim();
-        // Evitar reenviar link crudo
+        // Si ya es el enlace al formulario, saltarlo (se envía en el case 'formulario')
         if (text.includes('/formulario-cancion')) {
           return;
         }
@@ -75,7 +76,7 @@ async function enviarMensaje(lead, mensaje) {
 
 /**
  * Procesa las secuencias activas de cada lead.
- * Lee triggers, calcula delays, envía mensajes y añade una notificación en Firebase.
+ * Lee triggers, calcula delays, envía mensajes y guarda notificaciones en Firebase.
  */
 async function processSequences() {
   console.log("Ejecutando scheduler de secuencias...");
@@ -85,12 +86,9 @@ async function processSequences() {
       .where('secuenciasActivas', '!=', null)
       .get();
 
-    console.log(`Se encontraron ${leadsSnapshot.size} leads con secuencias activas`);
-
     for (const docSnap of leadsSnapshot.docs) {
       const lead = { id: docSnap.id, ...docSnap.data() };
-      if (!Array.isArray(lead.secuenciasActivas) || lead.secuenciasActivas.length === 0)
-        continue;
+      if (!Array.isArray(lead.secuenciasActivas) || lead.secuenciasActivas.length === 0) continue;
 
       let actualizaciones = false;
 
@@ -112,11 +110,9 @@ async function processSequences() {
         }
 
         const mensaje = mensajes[seqActiva.index];
-        const startTime =
-          new Date(seqActiva.startTime).getTime() + mensaje.delay * 60000;
+        const envioAt = new Date(seqActiva.startTime).getTime() + mensaje.delay * 60000;
 
-        if (Date.now() >= startTime) {
-          // Enviar el mensaje por WhatsApp
+        if (Date.now() >= envioAt) {
           await enviarMensaje(lead, mensaje);
 
           // Guardar notificación en Firebase (chat history)
@@ -136,12 +132,8 @@ async function processSequences() {
       }
 
       if (actualizaciones) {
-        // Filtrar secuencias completadas
         const restantes = lead.secuenciasActivas.filter(seq => !seq.completed);
-        await db.collection('leads').doc(lead.id).update({
-          secuenciasActivas: restantes
-        });
-        console.log(`Lead ${lead.id} actualizado con nuevas secuencias`);
+        await db.collection('leads').doc(lead.id).update({ secuenciasActivas: restantes });
       }
     }
   } catch (error) {
@@ -175,24 +167,20 @@ async function processTagTimeouts() {
       if (msgsSnap.empty) continue;
 
       const lastMsg = msgsSnap.docs[0].data();
-      const elapsedHrs =
-        (now - lastMsg.timestamp.toDate().getTime()) / (1000 * 60 * 60);
-
-      const etiquetas = Array.isArray(lead.etiquetas)
-        ? [...lead.etiquetas]
-        : [];
+      const hrs = (now - lastMsg.timestamp.toDate().getTime()) / 36e5;
+      const etiquetas = Array.isArray(lead.etiquetas) ? [...lead.etiquetas] : [];
       let updated = false;
-      if (tagAfter24h && elapsedHrs >= 24 && !etiquetas.includes(tagAfter24h)) {
+
+      if (tagAfter24h && hrs >= 24 && !etiquetas.includes(tagAfter24h)) {
         etiquetas.push(tagAfter24h);
         updated = true;
       }
-      if (tagAfter48h && elapsedHrs >= 48 && !etiquetas.includes(tagAfter48h)) {
+      if (tagAfter48h && hrs >= 48 && !etiquetas.includes(tagAfter48h)) {
         etiquetas.push(tagAfter48h);
         updated = true;
       }
       if (updated) {
         await db.collection('leads').doc(lead.id).update({ etiquetas });
-        console.log(`🗂️ Lead ${lead.id} etiquetas:`, etiquetas);
       }
     }
   } catch (error) {
@@ -202,11 +190,11 @@ async function processTagTimeouts() {
 
 // Cron: ejecutar processSequences cada minuto
 cron.schedule('* * * * *', () => {
-  processSequences().catch(err => console.error("Error en processSequences:", err));
+  processSequences().catch(err => console.error(err));
 });
 // Cron: ejecutar processTagTimeouts cada hora (minuto 0)
 cron.schedule('0 * * * *', () => {
-  processTagTimeouts().catch(err => console.error("Error en processTagTimeouts:", err));
+  processTagTimeouts().catch(err => console.error(err));
 });
 
 export { processSequences, processTagTimeouts };
