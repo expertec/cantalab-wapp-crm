@@ -113,7 +113,7 @@ export async function connectToWhatsApp() {
                   fecha_creacion: new Date(),
                   estado: 'nuevo',
                   source: 'WhatsApp',
-                  etiquetas: [ cfg.defaultTrigger || 'NuevoLead' ],  // <-- etiqueta inicial
+                  etiquetas: [cfg.defaultTrigger || 'NuevoLead'],  // etiqueta inicial
                   secuenciasActivas
                 });
 
@@ -170,7 +170,10 @@ export async function connectToWhatsApp() {
               timestamp: new Date(),
             };
 
+            // Guardar en subcolección y actualizar lastMessageAt
             await leadRef.collection('messages').add(newMessage);
+            await leadRef.update({ lastMessageAt: newMessage.timestamp });
+
             console.log("Mensaje de lead guardado en Firebase:", newMessage);
           } catch (err) {
             console.error("Error procesando mensaje entrante:", err);
