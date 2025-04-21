@@ -30,13 +30,12 @@ async function enviarMensaje(lead, mensaje) {
 
     switch (mensaje.type) {
       case 'texto': {
-        // Reemplaza y limpia
-        const text = replacePlaceholders(mensaje.contenido, lead).trim();
-        // Si ya es el enlace al formulario, saltarlo (se envía en el case 'formulario')
-        if (text.includes('/formulario-cancion')) {
+        // Si el template usa {{telefono}} o {{nombre}}, lo omitimos
+        if (mensaje.contenido.includes('{{telefono}}') || mensaje.contenido.includes('{{nombre}}')) {
           return;
         }
-        await sock.sendMessage(jid, { text });
+        const text = replacePlaceholders(mensaje.contenido, lead).trim();
+        if (text) await sock.sendMessage(jid, { text });
         break;
       }
       case 'formulario': {
@@ -44,10 +43,9 @@ async function enviarMensaje(lead, mensaje) {
         const leadPhone = phone;
         const nombreEnc = encodeURIComponent(lead.nombre || '');
         const url = `${base}/formulario-cancion?phone=${leadPhone}&name=${nombreEnc}`;
+
         const intro = (mensaje.contenido || '').replace(/\r?\n/g, ' ').trim();
-        const text = intro
-          ? `${intro} ${url}`
-          : url;
+        const text = intro ? `${intro} ${url}` : url;
         await sock.sendMessage(jid, { text });
         break;
       }
@@ -115,7 +113,7 @@ async function processSequences() {
         if (Date.now() >= envioAt) {
           await enviarMensaje(lead, mensaje);
 
-          // Guardar notificación en Firebase (chat history)
+          // Guardar notificación en Firebase
           await db
             .collection('leads')
             .doc(lead.id)
@@ -187,11 +185,6 @@ async function processTagTimeouts() {
     console.error("Error en processTagTimeouts:", error);
   }
 }
-
-// Cron: ejecutar processSequences cada minuto
-cron.schedule('* * * * *', () => {
-  processSequences().catch(err => console.error(err));
-});
 // Cron: ejecutar processTagTimeouts cada hora (minuto 0)
 cron.schedule('0 * * * *', () => {
   processTagTimeouts().catch(err => console.error(err));
