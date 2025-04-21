@@ -2,8 +2,6 @@
 import cron from 'node-cron';
 import { db } from './firebaseAdmin.js';
 import { getWhatsAppSock } from './whatsappService.js';
-import axios from 'axios';
-import path from 'path';
 
 /**
  * Reemplaza placeholders en plantillas de texto.
@@ -25,29 +23,30 @@ async function enviarMensaje(lead, mensaje) {
       return;
     }
 
-    // Prepara JID
+    // Construir JID
     let phone = lead.telefono;
     if (!phone.startsWith('521')) phone = `521${phone}`;
     const jid = `${phone}@s.whatsapp.net`;
 
     switch (mensaje.type) {
       case 'texto': {
-        const text = replacePlaceholders(mensaje.contenido, lead);
+        const text = replacePlaceholders(mensaje.contenido, lead).trim();
+        // Evitar reenviar link crudo
+        if (text.includes('/formulario-cancion')) {
+          return;
+        }
         await sock.sendMessage(jid, { text });
         break;
       }
       case 'formulario': {
-        // Genera link escapando espacios en nombre
         const base = process.env.FRONTEND_URL || 'http://localhost:3000';
         const leadPhone = phone;
         const nombreEnc = encodeURIComponent(lead.nombre || '');
         const url = `${base}/formulario-cancion?phone=${leadPhone}&name=${nombreEnc}`;
-
-        // Unir contenido + url en una sola línea, sin saltos
-        const text = `${replacePlaceholders(mensaje.contenido || '', lead)
-          .replace(/\r?\n/g, ' ')
-          .trim()} ${url}`;
-
+        const intro = (mensaje.contenido || '').replace(/\r?\n/g, ' ').trim();
+        const text = intro
+          ? `${intro} ${url}`
+          : url;
         await sock.sendMessage(jid, { text });
         break;
       }
@@ -156,11 +155,9 @@ async function processSequences() {
 async function processTagTimeouts() {
   console.log("🔔 Revisando etiquetas por timeout...");
   try {
-    // Cargar configuración global
     const cfgSnap = await db.collection('config').doc('appConfig').get();
     if (!cfgSnap.exists) return;
     const { tagAfter24h, tagAfter48h } = cfgSnap.data();
-
     if (!tagAfter24h && !tagAfter48h) return;
 
     const leadsSnap = await db.collection('leads').get();
@@ -168,8 +165,6 @@ async function processTagTimeouts() {
 
     for (const leadDoc of leadsSnap.docs) {
       const lead = { id: leadDoc.id, ...leadDoc.data() };
-
-      // Obtener último mensaje
       const msgsSnap = await db
         .collection('leads')
         .doc(lead.id)
@@ -187,7 +182,6 @@ async function processTagTimeouts() {
         ? [...lead.etiquetas]
         : [];
       let updated = false;
-
       if (tagAfter24h && elapsedHrs >= 24 && !etiquetas.includes(tagAfter24h)) {
         etiquetas.push(tagAfter24h);
         updated = true;
@@ -196,10 +190,9 @@ async function processTagTimeouts() {
         etiquetas.push(tagAfter48h);
         updated = true;
       }
-
       if (updated) {
         await db.collection('leads').doc(lead.id).update({ etiquetas });
-        console.log(`🗂️ Lead ${lead.id} - etiquetas actualizadas:`, etiquetas);
+        console.log(`🗂️ Lead ${lead.id} etiquetas:`, etiquetas);
       }
     }
   } catch (error) {
@@ -211,7 +204,6 @@ async function processTagTimeouts() {
 cron.schedule('* * * * *', () => {
   processSequences().catch(err => console.error("Error en processSequences:", err));
 });
-
 // Cron: ejecutar processTagTimeouts cada hora (minuto 0)
 cron.schedule('0 * * * *', () => {
   processTagTimeouts().catch(err => console.error("Error en processTagTimeouts:", err));
