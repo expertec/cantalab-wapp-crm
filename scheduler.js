@@ -29,20 +29,28 @@ async function enviarMensaje(lead, mensaje) {
         break;
       }
       case 'formulario': {
-        // Tu plantilla original (antes de sustituir)
         const rawTemplate = mensaje.contenido || '';
       
-        // Sustituye {{telefono}} y {{nombre}}
-        const intro = replacePlaceholders(rawTemplate, lead)
-          .replace(/\r?\n/g, ' ') // convierte saltos de línea en espacios
+        // Asegurarnos de que telefono lleve el prefijo 521
+        const phoneVal = lead.telefono.startsWith('521')
+          ? lead.telefono
+          : `521${lead.telefono}`;
+      
+        // Nombre URL-encoded para evitar espacios
+        const nameVal = encodeURIComponent(lead.nombre || '');
+      
+        // Reemplazar los placeholders POR PARTES en lugar de usar replacePlaceholders genérico
+        let text = rawTemplate
+          .replace('{{telefono}}', phoneVal)
+          .replace('{{nombre}}', nameVal)
+          .replace(/\r?\n/g, ' ') // saltos de línea → espacio
           .trim();
       
-        // Como la plantilla ya incluye la URL, solo enviamos intro
-        const text = intro;
-      
+        // Enviar exactamente lo que quedó en la plantilla
         await sock.sendMessage(jid, { text });
         break;
       }
+      
       
       
       
