@@ -29,16 +29,31 @@ async function enviarMensaje(lead, mensaje) {
         break;
       }
       case 'formulario': {
+        // Base URL de tu frontend
         const base = process.env.FRONTEND_URL || 'http://localhost:3000';
+        // Número y nombre URL-encoded
+        const leadPhone = phone;
         const nombreEnc = encodeURIComponent(lead.nombre || '');
-        const url = `${base}/formulario-cancion?phone=${phone}&name=${nombreEnc}`;
+        const url = `${base}/formulario-cancion?phone=${leadPhone}&name=${nombreEnc}`;
+      
+        // Intro: plantilla con placeholders ya reemplazados y sin saltos de línea
         const intro = replacePlaceholders(mensaje.contenido || '', lead)
           .replace(/\r?\n/g, ' ')
           .trim();
-        const text = intro ? `${intro} ${url}` : url;
+      
+        // Solo añadir la URL si no está ya al final de la intro
+        let text;
+        if (intro.endsWith(url)) {
+          text = intro;
+        } else {
+          text = intro ? `${intro} ${url}` : url;
+        }
+      
         await sock.sendMessage(jid, { text });
         break;
       }
+      
+      
       case 'audio':
         await sock.sendMessage(jid, {
           audio: { url: replacePlaceholders(mensaje.contenido, lead) },
