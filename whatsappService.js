@@ -78,106 +78,89 @@ export async function connectToWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('messages.upsert', async (m) => {
-      console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
+      console.log("Nuevo mensaje upsert:", JSON.stringify(m, null, 2));
       for (const msg of m.messages) {
-        if (msg.key && !msg.key.fromMe) {
-          const jid = msg.key.remoteJid;
-          if (jid.endsWith('@g.us')) continue; // ignorar grupos
+        if (!msg.key) continue;
+        const jid = msg.key.remoteJid;
+        if (!jid || jid.endsWith('@g.us')) continue; // ignorar grupos
 
-          try {
-            const leadRef = db.collection('leads').doc(jid);
-            const docSnap = await leadRef.get();
+        try {
+          const leadRef = db.collection('leads').doc(jid);
+          const docSnap = await leadRef.get();
 
-            // Obtener configuración global
-            const configSnap = await db.collection('config').doc('appConfig').get();
-            const cfg = configSnap.exists
-              ? configSnap.data()
-              : { autoSaveLeads: true, defaultTrigger: 'NuevoLead' };
+          // Obtener configuración global
+          const configSnap = await db.collection('config').doc('appConfig').get();
+          const cfg = configSnap.exists
+            ? configSnap.data()
+            : { autoSaveLeads: true, defaultTrigger: 'NuevoLead' };
 
-            if (!docSnap.exists) {
-              const telefono = jid.split('@')[0];
-              const nombre = msg.pushName || "Sin nombre";
+          // Crear lead si no existe y es mensaje entrante
+          if (!docSnap.exists && !msg.key.fromMe) {
+            const telefono = jid.split('@')[0];
+            const nombre = msg.pushName || "Sin nombre";
 
-              if (cfg.autoSaveLeads) {
-                // Inicializar secuencia activa con trigger predeterminado
-                const secuenciasActivas = [{
-                  trigger: cfg.defaultTrigger || 'NuevoLead',
-                  startTime: new Date().toISOString(),
-                  index: 0
-                }];
-
-                // Guardar lead + etiqueta + secuencia inicial
-                await leadRef.set({
-                  nombre,
-                  telefono,
-                  fecha_creacion: new Date(),
-                  estado: 'nuevo',
-                  source: 'WhatsApp',
-                  etiquetas: [cfg.defaultTrigger || 'NuevoLead'],  // etiqueta inicial
-                  secuenciasActivas
-                });
-
-                console.log("Nuevo lead guardado con etiqueta y secuencia automática:", telefono);
-              } else {
-                console.log("AutoSaveLeads deshabilitado, no se guarda el lead:", telefono);
-              }
-            }
-
-            let mediaType = null;
-            let mediaUrl = null;
-            let content = '';
-
-            // Imagen
-            if (msg.message.imageMessage) {
-              mediaType = 'image';
-              const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-              const fileName = `images/${jid}-${Date.now()}.jpg`;
-              const file = bucket.file(fileName);
-              await file.save(buffer, { contentType: 'image/jpeg' });
-              const [url] = await file.getSignedUrl({
-                action: 'read',
-                expires: '03-01-2500'
+            if (cfg.autoSaveLeads) {
+              const secuenciasActivas = [{
+                trigger: cfg.defaultTrigger || 'NuevoLead',
+                startTime: new Date().toISOString(),
+                index: 0
+              }];
+              await leadRef.set({
+                nombre,
+                telefono,
+                fecha_creacion: new Date(),
+                estado: 'nuevo',
+                source: 'WhatsApp',
+                etiquetas: [cfg.defaultTrigger || 'NuevoLead'],
+                secuenciasActivas
               });
-              mediaUrl = url;
-              console.log("Imagen guardada en Storage:", fileName);
+              console.log("Nuevo lead guardado:", telefono);
+            } else {
+              console.log("AutoSaveLeads deshabilitado, no se guarda el lead:", telefono);
             }
-            // Audio
-            else if (msg.message.audioMessage) {
-              mediaType = 'audio';
-              const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-              const fileName = `audios/${jid}-${Date.now()}.ogg`;
-              const file = bucket.file(fileName);
-              await file.save(buffer, { contentType: 'audio/ogg' });
-              const [url] = await file.getSignedUrl({
-                action: 'read',
-                expires: '03-01-2500'
-              });
-              mediaUrl = url;
-              console.log("Audio guardado en Storage:", fileName);
-            }
-            // Texto
-            else {
-              content = msg.message.conversation
-                || msg.message.extendedTextMessage?.text
-                || '';
-            }
-
-            const newMessage = {
-              content,
-              mediaType,
-              mediaUrl,
-              sender: 'lead',
-              timestamp: new Date(),
-            };
-
-            // Guardar en subcolección y actualizar lastMessageAt
-            await leadRef.collection('messages').add(newMessage);
-            await leadRef.update({ lastMessageAt: newMessage.timestamp });
-
-            console.log("Mensaje de lead guardado en Firebase:", newMessage);
-          } catch (err) {
-            console.error("Error procesando mensaje entrante:", err);
           }
+
+          let mediaType = null;
+          let mediaUrl = null;
+          let content = '';
+
+          if (msg.message.imageMessage) {
+            mediaType = 'image';
+            const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
+            const fileName = `images/${jid}-${Date.now()}.jpg`;
+            const file = bucket.file(fileName);
+            await file.save(buffer, { contentType: 'image/jpeg' });
+            const [url] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
+            mediaUrl = url;
+            console.log("Imagen guardada:", fileName);
+          } else if (msg.message.audioMessage) {
+            mediaType = 'audio';
+            const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
+            const fileName = `audios/${jid}-${Date.now()}.ogg`;
+            const file = bucket.file(fileName);
+            await file.save(buffer, { contentType: 'audio/ogg' });
+            const [url] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
+            mediaUrl = url;
+            console.log("Audio guardado:", fileName);
+          } else {
+            content = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+          }
+
+          const newMessage = {
+            content,
+            mediaType,
+            mediaUrl,
+            sender: msg.key.fromMe ? 'business' : 'lead',
+            timestamp: new Date(),
+          };
+
+          // Guardar en subcolección y actualizar lastMessageAt
+          await leadRef.collection('messages').add(newMessage);
+          await leadRef.update({ lastMessageAt: newMessage.timestamp });
+
+          console.log("Mensaje guardado en Firebase:", newMessage);
+        } catch (err) {
+          console.error("Error procesando mensaje:", err);
         }
       }
     });
