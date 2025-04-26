@@ -2,7 +2,7 @@
 import { db } from './firebaseAdmin.js';
 import { getWhatsAppSock } from './whatsappService.js';
 import admin from 'firebase-admin';
-import OpenAI from 'openai';
+import { OpenAI } from 'openai';
 
 const { FieldValue } = admin.firestore;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
