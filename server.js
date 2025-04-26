@@ -86,6 +86,18 @@ cron.schedule('* * * * *', () => {
   processSequences();
 });
 
+// Generar letras pendientes cada 5 minutos
+cron.schedule('*/5 * * * *', () => {
+  console.log('🖋️ Generando letras:', new Date());
+  generateLetras();
+});
+
+// Enviar letras ya generadas cada 5 minutos
+cron.schedule('*/5 * * * *', () => {
+  console.log('📨 Enviando letras:', new Date());
+  sendLetras();
+});
+
 // Arranca el servidor y conecta WhatsApp
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
@@ -93,3 +105,4 @@ app.listen(port, () => {
     console.error("Error al conectar WhatsApp en startup:", err)
   );
 });
+

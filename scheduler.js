@@ -1,6 +1,11 @@
 // server/scheduler.js
 import { db } from './firebaseAdmin.js';
 import { getWhatsAppSock } from './whatsappService.js';
+import admin from 'firebase-admin';
+import OpenAI from 'openai';
+
+const { FieldValue } = admin.firestore;
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
  * Reemplaza placeholders en plantillas de texto.
@@ -30,30 +35,18 @@ async function enviarMensaje(lead, mensaje) {
       }
       case 'formulario': {
         const rawTemplate = mensaje.contenido || '';
-      
-        // Asegurarnos de que telefono lleve el prefijo 521
         const phoneVal = lead.telefono.startsWith('521')
           ? lead.telefono
           : `521${lead.telefono}`;
-      
-        // Nombre URL-encoded para evitar espacios
         const nameVal = encodeURIComponent(lead.nombre || '');
-      
-        // Reemplazar los placeholders POR PARTES en lugar de usar replacePlaceholders genérico
         let text = rawTemplate
           .replace('{{telefono}}', phoneVal)
           .replace('{{nombre}}', nameVal)
-          .replace(/\r?\n/g, ' ') // saltos de línea → espacio
+          .replace(/\r?\n/g, ' ')
           .trim();
-      
-        // Enviar exactamente lo que quedó en la plantilla
         await sock.sendMessage(jid, { text });
         break;
       }
-      
-      
-      
-      
       case 'audio':
         await sock.sendMessage(jid, {
           audio: { url: replacePlaceholders(mensaje.contenido, lead) },
@@ -133,4 +126,83 @@ async function processSequences() {
   }
 }
 
-export { processSequences };
+/**
+ * Genera letras para los registros en 'letras' con status 'Sin letra'
+ * usando OpenAI, guarda la letra y marca status → 'enviarLetra'.
+ */
+async function generateLetras() {
+  try {
+    const snap = await db.collection('letras').where('status', '==', 'Sin letra').get();
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      // Construye un prompt a partir de todos los campos menos el status
+      const prompt = [
+        "Eres un compositor experto. Genera la letra de una canción con estos datos:",
+        ...Object.entries(data)
+          .filter(([k]) => k !== 'status')
+          .map(([k, v]) => `${k}: ${v}`)
+      ].join('\n');
+
+      const response = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: 'Eres un compositor creativo.' },
+          { role: 'user', content: prompt }
+        ]
+      });
+
+      const letra = response.choices?.[0]?.message?.content?.trim();
+      if (letra) {
+        await doc.ref.update({
+          letra,
+          status: 'enviarLetra'
+        });
+        console.log(`Letra generada para ${doc.id}`);
+      }
+    }
+  } catch (err) {
+    console.error("Error en generateLetras:", err);
+  }
+}
+
+/**
+ * Envía por WhatsApp las letras generadas (status 'enviarLetra'),
+ * etiqueta al lead y marca status → 'enviada'.
+ */
+async function sendLetras() {
+  try {
+    const snap = await db.collection('letras').where('status', '==', 'enviarLetra').get();
+    for (const doc of snap.docs) {
+      const { leadPhone, leadId, letra } = doc.data();
+      if (!leadPhone || !letra) continue;
+
+      const sock = getWhatsAppSock();
+      if (!sock) continue;
+
+      let phone = leadPhone;
+      if (!phone.startsWith('521')) phone = `521${phone}`;
+      const jid = `${phone}@s.whatsapp.net`;
+
+      await sock.sendMessage(jid, { text: letra });
+      console.log(`Letra enviada a ${leadPhone}`);
+
+      // Añade etiqueta al lead
+      if (leadId) {
+        await db.collection('leads').doc(leadId).update({
+          etiquetas: FieldValue.arrayUnion('LetraEnviada')
+        });
+      }
+
+      // Marca el registro como enviado
+      await doc.ref.update({ status: 'enviada' });
+    }
+  } catch (err) {
+    console.error("Error en sendLetras:", err);
+  }
+}
+
+export {
+  processSequences,
+  generateLetras,
+  sendLetras
+};
