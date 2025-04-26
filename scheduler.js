@@ -141,16 +141,22 @@ async function processSequences() {
  * usando OpenAI, guarda la letra y marca status → 'enviarLetra'.
  */
 async function generateLetras() {
+  console.log("▶️ generateLetras: inicio");
   try {
     const snap = await db.collection('letras').where('status', '==', 'Sin letra').get();
-    for (const doc of snap.docs) {
-      const data = doc.data();
+    console.log(`✔️ generateLetras: encontrados ${snap.size} registros con status 'Sin letra'`);
+    for (const docSnap of snap.docs) {
+      const id = docSnap.id;
+      const data = docSnap.data();
+      console.log(`✏️ generateLetras: procesando documento ${id}`, data);
+
       const prompt = [
         "Eres un compositor experto. Genera la letra de una canción con estos datos:",
         ...Object.entries(data)
           .filter(([k]) => k !== 'status')
           .map(([k, v]) => `${k}: ${v}`)
       ].join('\n');
+      console.log(`📝 generateLetras: prompt para ${id}:\n${prompt}`);
 
       const response = await openai.createChatCompletion({
         model: 'gpt-3.5-turbo',
@@ -159,18 +165,23 @@ async function generateLetras() {
           { role: 'user', content: prompt }
         ]
       });
+      console.log(`💬 generateLetras: respuesta OpenAI para ${id}:`, JSON.stringify(response.data, null, 2));
 
       const letra = response.data.choices?.[0]?.message?.content?.trim();
       if (letra) {
-        await doc.ref.update({
+        console.log(`✅ generateLetras: letra generada para ${id}:`, letra.substring(0, 100) + '...');
+        await docSnap.ref.update({
           letra,
           status: 'enviarLetra'
         });
-        console.log(`Letra generada para ${doc.id}`);
+        console.log(`🔄 generateLetras: actualizado documento ${id} con nueva letra y status 'enviarLetra'`);
+      } else {
+        console.warn(`⚠️ generateLetras: OpenAI devolvió sin contenido para ${id}`);
       }
     }
+    console.log("▶️ generateLetras: finalizado");
   } catch (err) {
-    console.error("Error en generateLetras:", err);
+    console.error("❌ Error en generateLetras:", err);
   }
 }
 
@@ -181,8 +192,8 @@ async function generateLetras() {
 async function sendLetras() {
   try {
     const snap = await db.collection('letras').where('status', '==', 'enviarLetra').get();
-    for (const doc of snap.docs) {
-      const { leadPhone, leadId, letra } = doc.data();
+    for (const docSnap of snap.docs) {
+      const { leadPhone, leadId, letra } = docSnap.data();
       if (!leadPhone || !letra) continue;
 
       const sock = getWhatsAppSock();
@@ -193,18 +204,20 @@ async function sendLetras() {
       const jid = `${phone}@s.whatsapp.net`;
 
       await sock.sendMessage(jid, { text: letra });
-      console.log(`Letra enviada a ${leadPhone}`);
+      console.log(`📤 sendLetras: letra enviada a ${leadPhone}`);
 
       if (leadId) {
         await db.collection('leads').doc(leadId).update({
           etiquetas: FieldValue.arrayUnion('LetraEnviada')
         });
+        console.log(`🏷️ sendLetras: etiqueta 'LetraEnviada' añadida a lead ${leadId}`);
       }
 
-      await doc.ref.update({ status: 'enviada' });
+      await docSnap.ref.update({ status: 'enviada' });
+      console.log(`🔄 sendLetras: documento ${docSnap.id} actualizado a status 'enviada'`);
     }
   } catch (err) {
-    console.error("Error en sendLetras:", err);
+    console.error("❌ Error en sendLetras:", err);
   }
 }
 
