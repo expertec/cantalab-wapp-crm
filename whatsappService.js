@@ -182,8 +182,22 @@ export async function sendMessageToLead(phone, messageContent) {
     if (!number.startsWith('521')) number = `521${number}`;
     const jid = `${number}@s.whatsapp.net`;
 
+    // 1) Enviar por WhatsApp
     await sock.sendMessage(jid, { text: messageContent });
     console.log(`Mensaje enviado a ${jid}: ${messageContent}`);
+
+    // 2) Guardar mensaje de salida y actualizar lastMessageAt
+    const leadRef = db.collection('leads').doc(jid);
+    const outMsg = {
+      content: messageContent,
+      sender: 'business',
+      timestamp: new Date(),
+    };
+    await leadRef.collection('messages').add(outMsg);
+    await leadRef.update({ lastMessageAt: outMsg.timestamp });
+
+    console.log("Mensaje de salida guardado en Firebase:", outMsg);
+
     return { success: true, message: 'Mensaje enviado a WhatsApp' };
   } catch (error) {
     console.error("Error enviando mensaje de WhatsApp:", error);

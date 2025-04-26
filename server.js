@@ -38,7 +38,8 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
 
   try {
     console.log(`Received message for leadId: ${leadId}`);
-    const leadDoc = await db.collection('leads').doc(leadId).get();
+    const leadRef = db.collection('leads').doc(leadId);
+    const leadDoc = await leadRef.get();
     if (!leadDoc.exists) {
       return res.status(404).json({ error: "Lead no encontrado" });
     }
@@ -54,13 +55,16 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     const jid = `${number}@s.whatsapp.net`;
     console.log(`Enviando mensaje a JID: ${jid}`);
 
-    // Guardamos en Firebase (opcional duplicado con front-end)
+    // Guardamos el mensaje en Firestore
     const newMessage = {
       content: message,
       sender: "business",
       timestamp: new Date(),
     };
-    await db.collection('leads').doc(leadId).collection('messages').add(newMessage);
+    await leadRef.collection('messages').add(newMessage);
+
+    // **Actualizamos también lastMessageAt** para poder ordenar luego los leads
+    await leadRef.update({ lastMessageAt: newMessage.timestamp });
 
     // Enviamos el mensaje por WhatsApp
     const result = await sendMessageToLead(number, message);
@@ -75,7 +79,7 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
 
 // Scheduler: ejecuta las secuencias activas cada minuto
 cron.schedule('* * * * *', () => {
-  console.log('Ejecutando prosesSequences a las', new Date().toLocaleTimeString());
+  console.log('Ejecutando processSequences a las', new Date().toLocaleTimeString());
   processSequences();
 });
 
