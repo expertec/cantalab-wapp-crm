@@ -18,6 +18,9 @@ let connectionStatus = "Desconectado";
 let whatsappSock = null;
 const localAuthFolder = '/var/data';
 
+// Firestore FieldValue for increments
+const { FieldValue } = admin.firestore;
+
 // Asegúrate de que en firebaseAdmin.js ya hayas hecho admin.initializeApp(...)
 const bucket = admin.storage().bucket();
 
@@ -112,9 +115,11 @@ export async function connectToWhatsApp() {
                 estado: 'nuevo',
                 source: 'WhatsApp',
                 etiquetas: [cfg.defaultTrigger || 'NuevoLead'],
-                secuenciasActivas
+                secuenciasActivas,
+                unreadCount: 1,               // inicializamos el contador
+                lastMessageAt: new Date()
               });
-              console.log("Nuevo lead guardado:", telefono);
+              console.log("Nuevo lead guardado con unreadCount=1:", telefono);
             } else {
               console.log("AutoSaveLeads deshabilitado, no se guarda el lead:", telefono);
             }
@@ -154,11 +159,20 @@ export async function connectToWhatsApp() {
             timestamp: new Date(),
           };
 
-          // Guardar en subcolección y actualizar lastMessageAt
+          // Guardar en subcolección
           await leadRef.collection('messages').add(newMessage);
-          await leadRef.update({ lastMessageAt: newMessage.timestamp });
 
-          console.log("Mensaje guardado en Firebase:", newMessage);
+          // Preparar datos de actualización
+          const updateData = { lastMessageAt: newMessage.timestamp };
+          // Si vino del lead (entrante), incrementamos unreadCount
+          if (!msg.key.fromMe) {
+            updateData.unreadCount = FieldValue.increment(1);
+          }
+
+          // Actualizar lead
+          await leadRef.update(updateData);
+
+          console.log("Mensaje guardado y lead actualizado:", newMessage, updateData);
         } catch (err) {
           console.error("Error procesando mensaje:", err);
         }
@@ -186,7 +200,7 @@ export async function sendMessageToLead(phone, messageContent) {
     await sock.sendMessage(jid, { text: messageContent });
     console.log(`Mensaje enviado a ${jid}: ${messageContent}`);
 
-    // 2) Guardar mensaje de salida y actualizar lastMessageAt
+    // 2) Guardar mensaje de salida + actualizar lastMessageAt
     const leadRef = db.collection('leads').doc(jid);
     const outMsg = {
       content: messageContent,
@@ -194,7 +208,10 @@ export async function sendMessageToLead(phone, messageContent) {
       timestamp: new Date(),
     };
     await leadRef.collection('messages').add(outMsg);
-    await leadRef.update({ lastMessageAt: outMsg.timestamp });
+    await leadRef.update({
+      lastMessageAt: outMsg.timestamp
+      // no tocamos unreadCount aquí, pues son mensajes salientes
+    });
 
     console.log("Mensaje de salida guardado en Firebase:", outMsg);
 

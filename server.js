@@ -63,7 +63,7 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     };
     await leadRef.collection('messages').add(newMessage);
 
-    // **Actualizamos también lastMessageAt** para poder ordenar luego los leads
+    // Actualizamos también lastMessageAt para poder ordenar luego los leads
     await leadRef.update({ lastMessageAt: newMessage.timestamp });
 
     // Enviamos el mensaje por WhatsApp
@@ -74,6 +74,23 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
   } catch (error) {
     console.error("Error enviando mensaje de WhatsApp:", error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint para marcar todos los mensajes de un lead como leídos
+app.post('/api/whatsapp/mark-read', async (req, res) => {
+  const { leadId } = req.body;
+  if (!leadId) {
+    return res.status(400).json({ error: "Falta leadId en el body" });
+  }
+  try {
+    await db.collection('leads')
+            .doc(leadId)
+            .update({ unreadCount: 0 });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Error marcando como leídos:", err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
