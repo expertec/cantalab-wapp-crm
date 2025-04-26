@@ -85,7 +85,8 @@ export async function connectToWhatsApp() {
       for (const msg of m.messages) {
         if (!msg.key) continue;
         const jid = msg.key.remoteJid;
-        if (!jid || jid.endsWith('@g.us')) continue; // ignorar grupos
+        if (!jid || jid.endsWith('@g.us')) continue;        // ignorar grupos
+        if (msg.key.fromMe) continue;                       // <-- IGNORAR mensajes salientes
 
         try {
           const leadRef = db.collection('leads').doc(jid);
@@ -98,7 +99,7 @@ export async function connectToWhatsApp() {
             : { autoSaveLeads: true, defaultTrigger: 'NuevoLead' };
 
           // Crear lead si no existe y es mensaje entrante
-          if (!docSnap.exists && !msg.key.fromMe) {
+          if (!docSnap.exists) {
             const telefono = jid.split('@')[0];
             const nombre = msg.pushName || "Sin nombre";
 
@@ -116,7 +117,7 @@ export async function connectToWhatsApp() {
                 source: 'WhatsApp',
                 etiquetas: [cfg.defaultTrigger || 'NuevoLead'],
                 secuenciasActivas,
-                unreadCount: 1,               // inicializamos el contador
+                unreadCount: 1,
                 lastMessageAt: new Date()
               });
               console.log("Nuevo lead guardado con unreadCount=1:", telefono);
@@ -155,24 +156,20 @@ export async function connectToWhatsApp() {
             content,
             mediaType,
             mediaUrl,
-            sender: msg.key.fromMe ? 'business' : 'lead',
+            sender: 'lead',
             timestamp: new Date(),
           };
 
           // Guardar en subcolección
           await leadRef.collection('messages').add(newMessage);
 
-          // Preparar datos de actualización
-          const updateData = { lastMessageAt: newMessage.timestamp };
-          // Si vino del lead (entrante), incrementamos unreadCount
-          if (!msg.key.fromMe) {
-            updateData.unreadCount = FieldValue.increment(1);
-          }
-
           // Actualizar lead
-          await leadRef.update(updateData);
+          await leadRef.update({
+            lastMessageAt: newMessage.timestamp,
+            unreadCount: FieldValue.increment(1)
+          });
 
-          console.log("Mensaje guardado y lead actualizado:", newMessage, updateData);
+          console.log("Mensaje guardado y lead actualizado:", newMessage);
         } catch (err) {
           console.error("Error procesando mensaje:", err);
         }
@@ -210,7 +207,6 @@ export async function sendMessageToLead(phone, messageContent) {
     await leadRef.collection('messages').add(outMsg);
     await leadRef.update({
       lastMessageAt: outMsg.timestamp
-      // no tocamos unreadCount aquí, pues son mensajes salientes
     });
 
     console.log("Mensaje de salida guardado en Firebase:", outMsg);
