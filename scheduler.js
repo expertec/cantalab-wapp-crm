@@ -2,12 +2,20 @@
 import { db } from './firebaseAdmin.js';
 import { getWhatsAppSock } from './whatsappService.js';
 import admin from 'firebase-admin';
-// Importa el paquete CommonJS de OpenAI en un módulo ESM
-import OpenAIPkg from 'openai';
-const { OpenAI } = OpenAIPkg;
+import { Configuration, OpenAIApi } from 'openai';
 
 const { FieldValue } = admin.firestore;
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Asegúrate de que la API key esté definida
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error("Falta la variable de entorno OPENAI_API_KEY");
+}
+
+// Configuración de OpenAI
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+const openai = new OpenAIApi(configuration);
 
 /**
  * Reemplaza placeholders en plantillas de texto.
@@ -46,7 +54,7 @@ async function enviarMensaje(lead, mensaje) {
           .replace('{{nombre}}', nameVal)
           .replace(/\r?\n/g, ' ')
           .trim();
-        if (text) await sock.sendMessage(jid, { text });
+        await sock.sendMessage(jid, { text });
         break;
       }
       case 'audio':
@@ -61,7 +69,7 @@ async function enviarMensaje(lead, mensaje) {
         });
         break;
       default:
-        console.warn(`Tipo desconocido en enviarMensaje(): ${mensaje.type}`);
+        console.warn(`Tipo desconocido: ${mensaje.type}`);
     }
   } catch (err) {
     console.error("Error al enviar mensaje:", err);
@@ -83,6 +91,7 @@ async function processSequences() {
       if (!Array.isArray(lead.secuenciasActivas) || !lead.secuenciasActivas.length) continue;
 
       let dirty = false;
+
       for (const seq of lead.secuenciasActivas) {
         const { trigger, startTime, index } = seq;
         const seqSnap = await db
@@ -143,7 +152,7 @@ async function generateLetras() {
           .map(([k, v]) => `${k}: ${v}`)
       ].join('\n');
 
-      const response = await openai.chat.completions.create({
+      const response = await openai.createChatCompletion({
         model: 'gpt-3.5-turbo',
         messages: [
           { role: 'system', content: 'Eres un compositor creativo.' },
@@ -151,7 +160,7 @@ async function generateLetras() {
         ]
       });
 
-      const letra = response.choices?.[0]?.message?.content?.trim();
+      const letra = response.data.choices?.[0]?.message?.content?.trim();
       if (letra) {
         await doc.ref.update({
           letra,
