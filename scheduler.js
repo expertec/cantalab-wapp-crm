@@ -1,8 +1,10 @@
-// server/scheduler.js
+// src/server/scheduler.js
 import { db } from './firebaseAdmin.js';
 import { getWhatsAppSock } from './whatsappService.js';
 import admin from 'firebase-admin';
-import { OpenAI } from 'openai';
+// Importa el paquete CommonJS de OpenAI en un módulo ESM
+import OpenAIPkg from 'openai';
+const { OpenAI } = OpenAIPkg;
 
 const { FieldValue } = admin.firestore;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -44,7 +46,7 @@ async function enviarMensaje(lead, mensaje) {
           .replace('{{nombre}}', nameVal)
           .replace(/\r?\n/g, ' ')
           .trim();
-        await sock.sendMessage(jid, { text });
+        if (text) await sock.sendMessage(jid, { text });
         break;
       }
       case 'audio':
@@ -59,7 +61,7 @@ async function enviarMensaje(lead, mensaje) {
         });
         break;
       default:
-        console.warn(`Tipo desconocido: ${mensaje.type}`);
+        console.warn(`Tipo desconocido en enviarMensaje(): ${mensaje.type}`);
     }
   } catch (err) {
     console.error("Error al enviar mensaje:", err);
@@ -81,7 +83,6 @@ async function processSequences() {
       if (!Array.isArray(lead.secuenciasActivas) || !lead.secuenciasActivas.length) continue;
 
       let dirty = false;
-
       for (const seq of lead.secuenciasActivas) {
         const { trigger, startTime, index } = seq;
         const seqSnap = await db
@@ -135,7 +136,6 @@ async function generateLetras() {
     const snap = await db.collection('letras').where('status', '==', 'Sin letra').get();
     for (const doc of snap.docs) {
       const data = doc.data();
-      // Construye un prompt a partir de todos los campos menos el status
       const prompt = [
         "Eres un compositor experto. Genera la letra de una canción con estos datos:",
         ...Object.entries(data)
@@ -186,14 +186,12 @@ async function sendLetras() {
       await sock.sendMessage(jid, { text: letra });
       console.log(`Letra enviada a ${leadPhone}`);
 
-      // Añade etiqueta al lead
       if (leadId) {
         await db.collection('leads').doc(leadId).update({
           etiquetas: FieldValue.arrayUnion('LetraEnviada')
         });
       }
 
-      // Marca el registro como enviado
       await doc.ref.update({ status: 'enviada' });
     }
   } catch (err) {
