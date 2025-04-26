@@ -14,7 +14,12 @@ import {
   getConnectionStatus,
   sendMessageToLead
 } from './whatsappService.js';
-import { processSequences } from './scheduler.js';
+// Aquí importamos también generateLetras y sendLetras
+import {
+  processSequences,
+  generateLetras,
+  sendLetras
+} from './scheduler.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -82,20 +87,20 @@ app.post('/api/whatsapp/mark-read', async (req, res) => {
 
 // Scheduler: ejecuta las secuencias activas cada minuto
 cron.schedule('* * * * *', () => {
-  console.log('Ejecutando processSequences a las', new Date().toLocaleTimeString());
-  processSequences();
+  console.log('⏱️ Ejecutando processSequences a las', new Date().toLocaleTimeString());
+  processSequences().catch(err => console.error('Error en processSequences:', err));
 });
 
 // Generar letras pendientes cada 5 minutos
 cron.schedule('*/5 * * * *', () => {
-  console.log('🖋️ Generando letras:', new Date());
-  generateLetras();
+  console.log('🖋️  Generando letras pendientes a las', new Date().toLocaleTimeString());
+  generateLetras().catch(err => console.error('Error en generateLetras:', err));
 });
 
 // Enviar letras ya generadas cada 5 minutos
 cron.schedule('*/5 * * * *', () => {
-  console.log('📨 Enviando letras:', new Date());
-  sendLetras();
+  console.log('📨  Enviando letras pendientes a las', new Date().toLocaleTimeString());
+  sendLetras().catch(err => console.error('Error en sendLetras:', err));
 });
 
 // Arranca el servidor y conecta WhatsApp
@@ -105,4 +110,3 @@ app.listen(port, () => {
     console.error("Error al conectar WhatsApp en startup:", err)
   );
 });
-
