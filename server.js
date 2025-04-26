@@ -2,8 +2,6 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import fs from 'fs';
-import path from 'path';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 
@@ -47,26 +45,14 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     const { telefono } = leadDoc.data();
     console.log(`Telefono for leadId ${leadId}: ${telefono}`);
 
-    // Estándar de WhatsApp: si no empieza con 521, lo agregamos
+    // Aseguramos el prefijo "521"
     let number = telefono;
     if (!number.startsWith('521')) {
       number = `521${number}`;
     }
-    const jid = `${number}@s.whatsapp.net`;
-    console.log(`Enviando mensaje a JID: ${jid}`);
 
-    // Guardamos el mensaje en Firestore
-    const newMessage = {
-      content: message,
-      sender: "business",
-      timestamp: new Date(),
-    };
-    await leadRef.collection('messages').add(newMessage);
-
-    // Actualizamos también lastMessageAt para poder ordenar luego los leads
-    await leadRef.update({ lastMessageAt: newMessage.timestamp });
-
-    // Enviamos el mensaje por WhatsApp
+    // Enviamos el mensaje por WhatsApp y dejamos que whatsappService
+    // sea el único que escriba en Firestore para evitar duplicados.
     const result = await sendMessageToLead(number, message);
     console.log("WhatsApp message sent:", result);
 
@@ -77,7 +63,7 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
   }
 });
 
-// Endpoint para marcar todos los mensajes de un lead como leídos
+// (Opcional) Endpoint para marcar todos los mensajes de un lead como leídos
 app.post('/api/whatsapp/mark-read', async (req, res) => {
   const { leadId } = req.body;
   if (!leadId) {
