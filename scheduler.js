@@ -139,13 +139,9 @@ async function processSequences() {
 /**
  * Genera letras para los registros en 'letras' con status 'Sin letra'
  * usando OpenAI, guarda la letra y marca status → 'enviarLetra'.
- * Aplica un delay de 25 minutos antes de iniciar.
  */
 async function generateLetras() {
-  console.log("▶️ generateLetras: inicio - esperando 25 minutos");
-  await new Promise(res => setTimeout(res, 25 * 60 * 1000));
-
-  console.log("▶️ generateLetras: ahora arrancamos");
+  console.log("▶️ generateLetras: inicio");
   try {
     const snap = await db.collection('letras').where('status', '==', 'Sin letra').get();
     console.log(`✔️ generateLetras: encontrados ${snap.size} registros con status 'Sin letra'`);
@@ -178,7 +174,7 @@ async function generateLetras() {
           letra,
           status: 'enviarLetra'
         });
-        console.log(`🔄 generateLetras: actualizado documento ${id} con status 'enviarLetra'`);
+        console.log(`🔄 generateLetras: actualizado documento ${id} con nueva letra y status 'enviarLetra'`);
       } else {
         console.warn(`⚠️ generateLetras: OpenAI devolvió sin contenido para ${id}`);
       }
@@ -192,30 +188,16 @@ async function generateLetras() {
 /**
  * Envía por WhatsApp las letras generadas (status 'enviarLetra'),
  * etiqueta al lead y marca status → 'enviada'.
- * Aplica un delay de 25 minutos antes de iniciar.
  */
 async function sendLetras() {
-  console.log("▶️ sendLetras: inicio - esperando 25 minutos");
-  await new Promise(res => setTimeout(res, 25 * 60 * 1000));
-
-  console.log("▶️ sendLetras: ahora arrancamos");
   try {
     const snap = await db.collection('letras').where('status', '==', 'enviarLetra').get();
-    console.log(`✔️ sendLetras: encontrados ${snap.size} registros con status 'enviarLetra'`);
     for (const docSnap of snap.docs) {
       const { leadPhone, leadId, letra } = docSnap.data();
-      console.log(`✉️ sendLetras: procesando envío para ${docSnap.id}`, { leadPhone, leadId });
-
-      if (!leadPhone || !letra) {
-        console.warn(`⚠️ sendLetras: faltan datos en ${docSnap.id}`);
-        continue;
-      }
+      if (!leadPhone || !letra) continue;
 
       const sock = getWhatsAppSock();
-      if (!sock) {
-        console.error("❌ sendLetras: no hay socket de WhatsApp activo");
-        continue;
-      }
+      if (!sock) continue;
 
       let phone = leadPhone;
       if (!phone.startsWith('521')) phone = `521${phone}`;
@@ -228,13 +210,12 @@ async function sendLetras() {
         await db.collection('leads').doc(leadId).update({
           etiquetas: FieldValue.arrayUnion('LetraEnviada')
         });
-        console.log(`🏷️ sendLetras: etiqueta 'LetraEnviada' añadida en lead ${leadId}`);
+        console.log(`🏷️ sendLetras: etiqueta 'LetraEnviada' añadida a lead ${leadId}`);
       }
 
       await docSnap.ref.update({ status: 'enviada' });
       console.log(`🔄 sendLetras: documento ${docSnap.id} actualizado a status 'enviada'`);
     }
-    console.log("▶️ sendLetras: finalizado");
   } catch (err) {
     console.error("❌ Error en sendLetras:", err);
   }
