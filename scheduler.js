@@ -154,12 +154,9 @@ async function generateLetras() {
       const data = docSnap.data();
       console.log(`✏️ generateLetras: procesando documento ${id}`, data);
 
-      const prompt = [
-        "Eres un compositor experto. Genera la letra de una canción con estos datos:",
-        ...Object.entries(data)
-          .filter(([k]) => k !== 'status')
-          .map(([k, v]) => `${k}: ${v}`)
-      ].join('\n');
+      // Nuevo prompt estático con campos de la base de datos
+      const { purpose, apodo, phrasesMemories } = data;
+      const prompt = `Escribe una letra de canción con lenguaje simple que su estructura sea verso 1, verso 2, coro, verso 3, verso 4 y coro. Agrega titulo de la canción en negritas. No pongas datos personales que no se puedan confirmar. Agrega un coro cantable y memorable. Solo responde con la letra de la canción sin texto adicional. Propósito: ${purpose}. Nombre: ${apodo}. Frases/Recuerdos: ${phrasesMemories}.`;
       console.log(`📝 generateLetras: prompt para ${id}:\n${prompt}`);
 
       const response = await openai.createChatCompletion({
