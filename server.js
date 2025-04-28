@@ -14,7 +14,6 @@ import {
   getConnectionStatus,
   sendMessageToLead
 } from './whatsappService.js';
-// Aquí importamos también generateLetras y sendLetras
 import {
   processSequences,
   generateLetras,
@@ -40,27 +39,18 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
 
   try {
-    console.log(`Received message for leadId: ${leadId}`);
     const leadRef = db.collection('leads').doc(leadId);
     const leadDoc = await leadRef.get();
     if (!leadDoc.exists) {
       return res.status(404).json({ error: "Lead no encontrado" });
     }
 
-    const { telefono } = leadDoc.data();
-    console.log(`Telefono for leadId ${leadId}: ${telefono}`);
-
-    // Aseguramos el prefijo "521"
-    let number = telefono;
-    if (!number.startsWith('521')) {
-      number = `521${number}`;
+    let { telefono } = leadDoc.data();
+    if (!telefono.startsWith('521')) {
+      telefono = `521${telefono}`;
     }
 
-    // Enviamos el mensaje por WhatsApp y dejamos que whatsappService
-    // sea el único que escriba en Firestore para evitar duplicados.
-    const result = await sendMessageToLead(number, message);
-    console.log("WhatsApp message sent:", result);
-
+    const result = await sendMessageToLead(telefono, message);
     return res.json(result);
   } catch (error) {
     console.error("Error enviando mensaje de WhatsApp:", error);
@@ -85,28 +75,38 @@ app.post('/api/whatsapp/mark-read', async (req, res) => {
   }
 });
 
-// Scheduler: ejecuta las secuencias activas cada minuto
-cron.schedule('* * * * *', () => {
-  console.log('⏱️ Ejecutando processSequences a las', new Date().toLocaleTimeString());
-  processSequences().catch(err => console.error('Error en processSequences:', err));
-});
-
-// Generar letras pendientes cada 5 minutos
-cron.schedule('*/5 * * * *', () => {
-  console.log('🖋️  Generando letras pendientes a las', new Date().toLocaleTimeString());
-  generateLetras().catch(err => console.error('Error en generateLetras:', err));
-});
-
-// Enviar letras ya generadas cada 5 minutos
-cron.schedule('*/5 * * * *', () => {
-  console.log('📨  Enviando letras pendientes a las', new Date().toLocaleTimeString());
-  sendLetras().catch(err => console.error('Error en sendLetras:', err));
-});
-
 // Arranca el servidor y conecta WhatsApp
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
   connectToWhatsApp().catch(err =>
     console.error("Error al conectar WhatsApp en startup:", err)
   );
+
+  // Genera cualquier letra pendiente al instante al iniciar
+  generateLetras().catch(err => 
+    console.error("Error inicial en generateLetras:", err)
+  );
+
+  // Chequea envíos pendientes al instante al iniciar
+  sendLetras().catch(err =>
+    console.error("Error inicial en sendLetras:", err)
+  );
+});
+
+// Scheduler: ejecuta las secuencias activas cada minuto
+cron.schedule('* * * * *', () => {
+  console.log('⏱️ processSequences:', new Date().toISOString());
+  processSequences().catch(err => console.error('Error en processSequences:', err));
+});
+
+// Genera letras pendientes cada minuto
+cron.schedule('* * * * *', () => {
+  console.log('🖋️ generateLetras:', new Date().toISOString());
+  generateLetras().catch(err => console.error('Error en generateLetras:', err));
+});
+
+// Envía letras pendientes cada minuto
+cron.schedule('* * * * *', () => {
+  console.log('📨 sendLetras:', new Date().toISOString());
+  sendLetras().catch(err => console.error('Error en sendLetras:', err));
 });
