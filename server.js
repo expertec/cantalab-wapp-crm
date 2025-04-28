@@ -12,7 +12,8 @@ import {
   connectToWhatsApp,
   getLatestQR,
   getConnectionStatus,
-  sendMessageToLead
+  sendMessageToLead,
+  getSessionPhone      // ← importamos la nueva función
 } from './whatsappService.js';
 import {
   processSequences,
@@ -34,10 +35,19 @@ app.get('/api/whatsapp/status', (req, res) => {
   });
 });
 
+// Nuevo endpoint para obtener el número de sesión
+app.get('/api/whatsapp/number', (req, res) => {
+  const phone = getSessionPhone();
+  if (phone) {
+    res.json({ phone });
+  } else {
+    res.status(503).json({ error: 'WhatsApp no conectado' });
+  }
+});
+
 // Endpoint para enviar mensaje de WhatsApp
 app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
-
   try {
     const leadRef = db.collection('leads').doc(leadId);
     const leadDoc = await leadRef.get();
@@ -58,7 +68,7 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
   }
 });
 
-// (Opcional) Endpoint para marcar todos los mensajes de un lead como leídos
+// (Opcional) Marcar todos los mensajes de un lead como leídos
 app.post('/api/whatsapp/mark-read', async (req, res) => {
   const { leadId } = req.body;
   if (!leadId) {
@@ -82,12 +92,10 @@ app.listen(port, () => {
     console.error("Error al conectar WhatsApp en startup:", err)
   );
 
-  // Genera cualquier letra pendiente al instante al iniciar
-  generateLetras().catch(err => 
+  // Arranque inmediato de generación/envío de letras pendientes
+  generateLetras().catch(err =>
     console.error("Error inicial en generateLetras:", err)
   );
-
-  // Chequea envíos pendientes al instante al iniciar
   sendLetras().catch(err =>
     console.error("Error inicial en sendLetras:", err)
   );

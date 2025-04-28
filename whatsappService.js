@@ -16,6 +16,8 @@ import { db } from './firebaseAdmin.js';
 let latestQR = null;
 let connectionStatus = "Desconectado";
 let whatsappSock = null;
+let sessionPhone = null; // <— almacenará el número de la sesión activa
+
 const localAuthFolder = '/var/data';
 
 // Firestore FieldValue for increments
@@ -35,6 +37,13 @@ export async function connectToWhatsApp() {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(localAuthFolder);
+
+    // Extraer número de la sesión de las credenciales guardadas
+    if (state.creds.me?.id) {
+      sessionPhone = state.creds.me.id.split('@')[0];
+      console.log("WhatsApp session phone:", sessionPhone);
+    }
+
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -57,7 +66,11 @@ export async function connectToWhatsApp() {
       if (connection === 'open') {
         connectionStatus = "Conectado";
         latestQR = null;
-        console.log("Conexión exitosa con WhatsApp!");
+        // También se puede actualizar sessionPhone aquí si es necesario:
+        if (sock.user?.id) {
+          sessionPhone = sock.user.id.split('@')[0];
+          console.log("WhatsApp conectado. Sesión en:", sessionPhone);
+        }
       }
       if (connection === 'close') {
         const reason = lastDisconnect?.error?.output?.statusCode;
@@ -71,6 +84,7 @@ export async function connectToWhatsApp() {
             );
             console.log("Estado de autenticación limpiado.");
           }
+          sessionPhone = null;
           connectToWhatsApp();
         } else {
           connectToWhatsApp();
@@ -86,7 +100,7 @@ export async function connectToWhatsApp() {
         if (!msg.key) continue;
         const jid = msg.key.remoteJid;
         if (!jid || jid.endsWith('@g.us')) continue;        // ignorar grupos
-        if (msg.key.fromMe) continue;                       // <-- IGNORAR mensajes salientes
+        if (msg.key.fromMe) continue;                       // ignorar mensajes salientes
 
         try {
           const leadRef = db.collection('leads').doc(jid);
@@ -98,7 +112,7 @@ export async function connectToWhatsApp() {
             ? configSnap.data()
             : { autoSaveLeads: true, defaultTrigger: 'NuevoLead' };
 
-          // Crear lead si no existe y es mensaje entrante
+          // Crear lead si no existe
           if (!docSnap.exists) {
             const telefono = jid.split('@')[0];
             const nombre = msg.pushName || "Sin nombre";
@@ -160,10 +174,7 @@ export async function connectToWhatsApp() {
             timestamp: new Date(),
           };
 
-          // Guardar en subcolección
           await leadRef.collection('messages').add(newMessage);
-
-          // Actualizar lead
           await leadRef.update({
             lastMessageAt: newMessage.timestamp,
             unreadCount: FieldValue.increment(1)
@@ -228,4 +239,12 @@ export function getConnectionStatus() {
 
 export function getWhatsAppSock() {
   return whatsappSock;
+}
+
+/**
+ * Devuelve el número de teléfono de la sesión activa (sin prefijo @...).
+ * Retorna null si no hay ninguna conexión abierta.
+ */
+export function getSessionPhone() {
+  return sessionPhone;
 }
