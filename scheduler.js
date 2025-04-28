@@ -27,14 +27,14 @@ function replacePlaceholders(template, leadData) {
 
 /**
  * Envía un mensaje de WhatsApp según su tipo.
+ * Usa exactamente el número que viene en lead.telefono (sin anteponer country code).
  */
 async function enviarMensaje(lead, mensaje) {
   try {
     const sock = getWhatsAppSock();
     if (!sock) return;
 
-    let phone = lead.telefono;
-    if (!phone.startsWith('521')) phone = `521${phone}`;
+    const phone = (lead.telefono || '').replace(/\D/g, '');
     const jid = `${phone}@s.whatsapp.net`;
 
     switch (mensaje.type) {
@@ -45,16 +45,13 @@ async function enviarMensaje(lead, mensaje) {
       }
       case 'formulario': {
         const rawTemplate = mensaje.contenido || '';
-        const phoneVal = lead.telefono.startsWith('521')
-          ? lead.telefono
-          : `521${lead.telefono}`;
         const nameVal = encodeURIComponent(lead.nombre || '');
-        let text = rawTemplate
-          .replace('{{telefono}}', phoneVal)
+        const text = rawTemplate
+          .replace('{{telefono}}', phone)
           .replace('{{nombre}}', nameVal)
           .replace(/\r?\n/g, ' ')
           .trim();
-        await sock.sendMessage(jid, { text });
+        if (text) await sock.sendMessage(jid, { text });
         break;
       }
       case 'audio':
@@ -91,7 +88,6 @@ async function processSequences() {
       if (!Array.isArray(lead.secuenciasActivas) || !lead.secuenciasActivas.length) continue;
 
       let dirty = false;
-
       for (const seq of lead.secuenciasActivas) {
         const { trigger, startTime, index } = seq;
         const seqSnap = await db
@@ -139,7 +135,6 @@ async function processSequences() {
 /**
  * Genera letras para los registros en 'letras' con status 'Sin letra',
  * guarda la letra, marca status → 'enviarLetra' y añade marca de tiempo.
- * Se ejecuta inmediatamente al llamar.
  */
 async function generateLetras() {
   console.log("▶️ generateLetras: inicio");
@@ -147,13 +142,13 @@ async function generateLetras() {
     const snap = await db.collection('letras').where('status', '==', 'Sin letra').get();
     console.log(`✔️ generateLetras: encontrados ${snap.size} registros con status 'Sin letra'`);
     for (const docSnap of snap.docs) {
-      const id = docSnap.id;
       const data = docSnap.data();
-      console.log(`✏️ generateLetras: procesando documento ${id}`);
-
-      const { purpose, apodo, phrasesMemories } = data;
-      const prompt = `Escribe una letra de canción con lenguaje simple que su estructura sea verso 1, verso 2, coro, verso 3, verso 4 y coro. Agrega titulo de la canción en negritas. No pongas datos personales que no se puedan confirmar. Agrega un coro cantable y memorable. Solo responde con la letra de la canción sin texto adicional. Propósito: ${purpose}. Nombre: ${apodo}. Frases/Recuerdos: ${phrasesMemories}.`;
-      console.log(`📝 prompt para ${id}:\n${prompt}`);
+      const prompt = [
+        "Eres un compositor creativo.",
+        `Propósito: ${data.purpose}`,
+        `Nombre: ${data.apodo}`,
+        `Frases/Recuerdos: ${data.phrasesMemories}`
+      ].join("\n");
 
       const response = await openai.createChatCompletion({
         model: 'gpt-3.5-turbo',
@@ -163,16 +158,14 @@ async function generateLetras() {
         ]
       });
 
-      const letra = response.data.choices?.[0]?.message?.content?.trim();
+      const letra = response.data.choices[0]?.message?.content?.trim();
       if (letra) {
-        console.log(`✅ letra generada para ${id}`);
+        console.log(`✅ letra generada para ${docSnap.id}`);
         await docSnap.ref.update({
           letra,
           status: 'enviarLetra',
           letraGeneratedAt: FieldValue.serverTimestamp()
         });
-      } else {
-        console.warn(`⚠️ sin contenido para ${id}`);
       }
     }
     console.log("▶️ generateLetras: finalizado");
@@ -183,42 +176,45 @@ async function generateLetras() {
 
 /**
  * Envía por WhatsApp las letras generadas (status 'enviarLetra'),
- * etiqueta al lead y marca status → 'enviada'.
- * Solo envía si han pasado 15 minutos desde 'letraGeneratedAt'.
+ * añade trigger 'LetraEnviada' al lead y marca status → 'enviada'.
  */
 async function sendLetras() {
-  console.log("▶️ sendLetras: inicio");
   try {
-    const now = Date.now();
     const snap = await db.collection('letras').where('status', '==', 'enviarLetra').get();
-    console.log(`✔️ sendLetras: encontrados ${snap.size} registros con status 'enviarLetra'`);
-
     for (const docSnap of snap.docs) {
-      const { leadPhone, leadId, letra, letraGeneratedAt } = docSnap.data();
-      if (!letra || !letraGeneratedAt) continue;
-
-      const genTs = letraGeneratedAt.toDate().getTime();
-      if (now < genTs + 15 * 60 * 1000) continue;
+      const { leadPhone, leadId, letra, nombre } = docSnap.data();
+      if (!leadPhone || !letra) continue;
 
       const sock = getWhatsAppSock();
       if (!sock) continue;
 
-      let phone = leadPhone;
-      if (!phone.startsWith('521')) phone = `521${phone}`;
+      const phone = leadPhone.replace(/\D/g, '');
       const jid = `${phone}@s.whatsapp.net`;
 
+      // Mensaje de cierre
+      const greeting = `Listo ${nombre || ''}, ya terminé la letra para tu canción. *Léela y dime si te gusta.*`;
+      await sock.sendMessage(jid, { text: greeting });
+
+      // Ahora envía la letra
       await sock.sendMessage(jid, { text: letra });
+
+      console.log(`📤 sendLetras: letra enviada a ${leadPhone}`);
+
       if (leadId) {
         await db.collection('leads').doc(leadId).update({
-          etiquetas: FieldValue.arrayUnion('LetraEnviada')
+          etiquetas: FieldValue.arrayUnion('LetraEnviada'),
+          secuenciasActivas: FieldValue.arrayUnion({
+            trigger: 'LetraEnviada',
+            startTime: new Date().toISOString(),
+            index: 0
+          })
         });
       }
+
       await docSnap.ref.update({ status: 'enviada' });
     }
-
-    console.log("▶️ sendLetras: finalizado");
   } catch (err) {
-    console.error("❌ Error sendLetras:", err);
+    console.error("❌ Error en sendLetras:", err);
   }
 }
 
