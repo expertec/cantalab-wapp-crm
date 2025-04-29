@@ -19,7 +19,7 @@ const openai = new OpenAIApi(configuration);
 
 /**
  * Reemplaza placeholders en plantillas de texto.
- * {{campo}} se sustituye por leadData[campo] si existe.
+ * {{campo}} se sustituye por leadData.campo si existe.
  */
 function replacePlaceholders(template, leadData) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, field) => leadData[field] || '');
@@ -183,7 +183,7 @@ async function sendLetras() {
 
     for (const docSnap of snap.docs) {
       const data = docSnap.data();
-      const { leadPhone, leadId, letra, nombre, letraGeneratedAt } = data;
+      const { leadPhone, leadId, letra, requesterName, letraGeneratedAt } = data;
       if (!leadPhone || !letra || !letraGeneratedAt) continue;
 
       const genTime = letraGeneratedAt.toDate().getTime();
@@ -198,8 +198,11 @@ async function sendLetras() {
       const phone = leadPhone.replace(/\D/g, '');
       const jid = `${phone}@s.whatsapp.net`;
 
+      // Obtener primer nombre
+      const firstName = (requesterName || '').trim().split(' ')[0];
+
       // 1) Mensaje de cierre
-      const greeting = `Listo ${nombre || ''}, ya terminé la letra para tu canción. *Léela y dime si te gusta.*`;
+      const greeting = `Listo ${firstName}, ya terminé la letra para tu canción. *Léela y dime si te gusta.*`;
       await sock.sendMessage(jid, { text: greeting });
 
       // 2) Enviar la letra
@@ -209,7 +212,7 @@ async function sendLetras() {
       await sock.sendMessage(jid, { video: { url: VIDEO_URL } });
 
       // 4) Mensaje promocional
-      const promo = `${nombre || ''} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $897 MXN.\n\n` +
+      const promo = `${firstName} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $897 MXN.\n\n` +
         `Puedes pagar en esta cuenta:\n\n🏦 Transferencia bancaria:\n` +
         `Cuenta: 4152 3143 2669 0826\nBanco: BBVA\nTitular: Iván Martínez Jiménez\n\n` +
         `🧾 Para facturar a esta:\n\nCLABE: 012814001155051514\nBanco: BBVA\nTitular: UDEL UNIVERSIDAD SAPI DE CV\n\n` +
