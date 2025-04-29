@@ -142,13 +142,18 @@ async function generateLetras() {
     const snap = await db.collection('letras').where('status', '==', 'Sin letra').get();
     console.log(`✔️ generateLetras: encontrados ${snap.size} registros con status 'Sin letra'`);
     for (const docSnap of snap.docs) {
+      const id = docSnap.id;
       const data = docSnap.data();
-      const prompt = [
-        "Eres un compositor creativo.",
-        `Propósito: ${data.purpose}`,
-        `Nombre: ${data.apodo}`,
-        `Frases/Recuerdos: ${data.phrasesMemories}`
-      ].join("\n");
+      const { purpose, apodo, phrasesMemories } = data;
+      // Prompt exacto que pediste:
+      const prompt = `Escribe una letra de canción con lenguaje simple que 
+su estructura sea verso 1, verso 2, coro, verso 3, verso 4 y coro. 
+Agrega título de la canción en negritas. 
+No pongas datos personales que no se puedan confirmar. 
+Agrega un coro cantable y memorable. 
+Solo responde con la letra de la canción sin texto adicional. 
+Propósito: ${purpose}. Nombre: ${apodo}. Frases/Recuerdos: ${phrasesMemories}.`;
+      console.log(`📝 prompt para ${id}:\n${prompt}`);
 
       const response = await openai.createChatCompletion({
         model: 'gpt-3.5-turbo',
@@ -160,7 +165,7 @@ async function generateLetras() {
 
       const letra = response.data.choices[0]?.message?.content?.trim();
       if (letra) {
-        console.log(`✅ letra generada para ${docSnap.id}`);
+        console.log(`✅ letra generada para ${id}`);
         await docSnap.ref.update({
           letra,
           status: 'enviarLetra',
@@ -177,13 +182,22 @@ async function generateLetras() {
 /**
  * Envía por WhatsApp las letras generadas (status 'enviarLetra'),
  * añade trigger 'LetraEnviada' al lead y marca status → 'enviada'.
+ * Solo se envía si han pasado al menos 15 minutos desde letraGeneratedAt.
  */
 async function sendLetras() {
   try {
     const snap = await db.collection('letras').where('status', '==', 'enviarLetra').get();
     for (const docSnap of snap.docs) {
-      const { leadPhone, leadId, letra, nombre } = docSnap.data();
-      if (!leadPhone || !letra) continue;
+      const data = docSnap.data();
+      const { leadPhone, leadId, letra, nombre, letraGeneratedAt } = data;
+      if (!leadPhone || !letra || !letraGeneratedAt) continue;
+
+      // Comprobar delay de 15 minutos
+      const generatedAtMs = letraGeneratedAt.toDate().getTime();
+      if (Date.now() < generatedAtMs + 15 * 60 * 1000) {
+        // Aún no han transcurrido 15 minutos
+        continue;
+      }
 
       const sock = getWhatsAppSock();
       if (!sock) continue;
