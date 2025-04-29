@@ -19,7 +19,7 @@ const openai = new OpenAIApi(configuration);
 
 /**
  * Reemplaza placeholders en plantillas de texto.
- * {{campo}} se sustituye por leadData.campo si existe.
+ * {{campo}} se sustituye por leadData[campo] si existe.
  */
 function replacePlaceholders(template, leadData) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, field) => leadData[field] || '');
@@ -142,18 +142,9 @@ async function generateLetras() {
     const snap = await db.collection('letras').where('status', '==', 'Sin letra').get();
     console.log(`✔️ generateLetras: encontrados ${snap.size} registros con status 'Sin letra'`);
     for (const docSnap of snap.docs) {
-      const id = docSnap.id;
       const data = docSnap.data();
-      const { purpose, apodo, phrasesMemories } = data;
-      // Prompt exacto que pediste:
-      const prompt = `Escribe una letra de canción con lenguaje simple que 
-su estructura sea verso 1, verso 2, coro, verso 3, verso 4 y coro. 
-Agrega título de la canción en negritas. 
-No pongas datos personales que no se puedan confirmar. 
-Agrega un coro cantable y memorable. 
-Solo responde con la letra de la canción sin texto adicional. 
-Propósito: ${purpose}. Nombre: ${apodo}. Frases/Recuerdos: ${phrasesMemories}.`;
-      console.log(`📝 prompt para ${id}:\n${prompt}`);
+      const prompt = `Escribe una letra de canción con lenguaje simple que su estructura sea verso 1, verso 2, coro, verso 3, verso 4 y coro. Agrega titulo de la canción en negritas. No pongas datos personales que no se puedan confirmar. Agrega un coro cantable y memorable. Solo responde con la letra de la canción sin texto adicional. Propósito: ${data.purpose}. Nombre: ${data.apodo}. Frases/Recuerdos: ${data.phrasesMemories}.`;
+      console.log(`📝 prompt para ${docSnap.id}:\n${prompt}`);
 
       const response = await openai.createChatCompletion({
         model: 'gpt-3.5-turbo',
@@ -163,9 +154,9 @@ Propósito: ${purpose}. Nombre: ${apodo}. Frases/Recuerdos: ${phrasesMemories}.`
         ]
       });
 
-      const letra = response.data.choices[0]?.message?.content?.trim();
+      const letra = response.data.choices?.[0]?.message?.content?.trim();
       if (letra) {
-        console.log(`✅ letra generada para ${id}`);
+        console.log(`✅ letra generada para ${docSnap.id}`);
         await docSnap.ref.update({
           letra,
           status: 'enviarLetra',
@@ -182,20 +173,22 @@ Propósito: ${purpose}. Nombre: ${apodo}. Frases/Recuerdos: ${phrasesMemories}.`
 /**
  * Envía por WhatsApp las letras generadas (status 'enviarLetra'),
  * añade trigger 'LetraEnviada' al lead y marca status → 'enviada'.
- * Solo se envía si han pasado al menos 15 minutos desde letraGeneratedAt.
+ * Solo envía si han pasado al menos 15 minutos desde 'letraGeneratedAt'.
  */
 async function sendLetras() {
   try {
+    const now = Date.now();
     const snap = await db.collection('letras').where('status', '==', 'enviarLetra').get();
+    const VIDEO_URL = 'https://cantalab.com/wp-content/uploads/2025/04/WhatsApp-Video-2025-04-23-at-8.01.51-PM.mp4';
+
     for (const docSnap of snap.docs) {
       const data = docSnap.data();
       const { leadPhone, leadId, letra, nombre, letraGeneratedAt } = data;
       if (!leadPhone || !letra || !letraGeneratedAt) continue;
 
-      // Comprobar delay de 15 minutos
-      const generatedAtMs = letraGeneratedAt.toDate().getTime();
-      if (Date.now() < generatedAtMs + 15 * 60 * 1000) {
-        // Aún no han transcurrido 15 minutos
+      const genTime = letraGeneratedAt.toDate().getTime();
+      if (now - genTime < 15 * 60 * 1000) {
+        // Aún no pasan 15 minutos
         continue;
       }
 
@@ -205,15 +198,28 @@ async function sendLetras() {
       const phone = leadPhone.replace(/\D/g, '');
       const jid = `${phone}@s.whatsapp.net`;
 
-      // Mensaje de cierre
+      // 1) Mensaje de cierre
       const greeting = `Listo ${nombre || ''}, ya terminé la letra para tu canción. *Léela y dime si te gusta.*`;
       await sock.sendMessage(jid, { text: greeting });
 
-      // Ahora envía la letra
+      // 2) Enviar la letra
       await sock.sendMessage(jid, { text: letra });
 
-      console.log(`📤 sendLetras: letra enviada a ${leadPhone}`);
+      // 3) Enviar el video
+      await sock.sendMessage(jid, { video: { url: VIDEO_URL } });
 
+      // 4) Mensaje promocional
+      const promo = `${nombre || ''} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $897 MXN.\n\n` +
+        `Puedes pagar en esta cuenta:\n\n🏦 Transferencia bancaria:\n` +
+        `Cuenta: 4152 3143 2669 0826\nBanco: BBVA\nTitular: Iván Martínez Jiménez\n\n` +
+        `🧾 Para facturar a esta:\n\nCLABE: 012814001155051514\nBanco: BBVA\nTitular: UDEL UNIVERSIDAD SAPI DE CV\n\n` +
+        `🌐 Pago en línea o en dolares 🇺🇸 (45 USD):\n` +
+        `https://cantalab.com/carrito-cantalab/?billing_id={{R}}`;
+      await sock.sendMessage(jid, { text: promo });
+
+      console.log(`📤 sendLetras: letras y promoción enviadas a ${leadPhone}`);
+
+      // 5) Actualizar lead
       if (leadId) {
         await db.collection('leads').doc(leadId).update({
           etiquetas: FieldValue.arrayUnion('LetraEnviada'),
@@ -225,7 +231,9 @@ async function sendLetras() {
         });
       }
 
+      // 6) Marcar documento como enviado
       await docSnap.ref.update({ status: 'enviada' });
+      console.log(`🔄 sendLetras: documento ${docSnap.id} marcado como 'enviada'`);
     }
   } catch (err) {
     console.error("❌ Error en sendLetras:", err);
