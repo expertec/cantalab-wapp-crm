@@ -57,13 +57,17 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     }
 
     // Normalizar número con libphonenumber-js
-    const raw = leadDoc.data().telefono;                           // Ej. "18329559606" o "+521234567890"
-    const input = raw.startsWith('+') ? raw : `+${raw}`;
-    const pn = parsePhoneNumberFromString(input);
+    const raw = String(leadDoc.data().telefono || '').replace(/\D/g, '');
+    const normalized = raw.length === 10
+      ? `+52${raw}`    // si son 10 dígitos, asumimos México
+      : `+${raw}`;     // de lo contrario, solo agregamos '+'
+    const pn = parsePhoneNumberFromString(normalized);
     if (!pn || !pn.isValid()) {
+      console.log('Número inválido:', raw, '→', normalized);
       return res.status(400).json({ error: 'Teléfono inválido' });
     }
-    const e164 = pn.number.slice(1);                              // "18329559606" o "521234567890"
+    const e164 = pn.number.slice(1);
+    console.log('Enviando a:', pn.number);
 
     // Enviar mensaje
     const result = await sendMessageToLead(e164, message);
