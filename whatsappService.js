@@ -94,6 +94,49 @@ export async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // Guarda mensajes entrantes (incluye los que envía el lead desde la app oficial)
+sock.ev.on('messages.upsert', async ({ messages, type }) => {
+  if (type !== 'notify') return;               // solo nuevos mensajes
+  for (const msg of messages) {
+    if (!msg.key || msg.key.fromMe) continue;  // saltar salientes
+    const jid = msg.key.remoteJid;
+    if (!jid || jid.endsWith('@g.us')) continue; // ignorar grupos
+
+    // 1) Extrae el número (sin sufijo @...)
+    const phone = jid.split('@')[0];
+
+    // 2) Extrae el texto (adapta si quieres otros tipos: image, audio, etc.)
+    const text = msg.message.conversation
+                ?? msg.message.extendedTextMessage?.text
+                ?? '';
+
+    // 3) Busca el lead por teléfono
+    const q = await db.collection('leads')
+                      .where('telefono', '==', phone)
+                      .limit(1)
+                      .get();
+    if (q.empty) continue;
+    const leadId = q.docs[0].id;
+
+    // 4) Guarda en /leads/{leadId}/messages
+    await db.collection('leads')
+            .doc(leadId)
+            .collection('messages')
+            .add({
+               content: text,
+               sender: 'lead',
+               timestamp: new Date()
+            });
+
+    // 5) Actualiza contadores si usas unreadCount o lastMessageAt
+    await db.collection('leads').doc(leadId).update({
+      lastMessageAt: new Date(),
+      unreadCount: admin.firestore.FieldValue.increment(1)
+    });
+  }
+});
+
+
     sock.ev.on('messages.upsert', async (m) => {
       console.log("Nuevo mensaje upsert:", JSON.stringify(m, null, 2));
       for (const msg of m.messages) {
