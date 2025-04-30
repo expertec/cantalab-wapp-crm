@@ -175,9 +175,6 @@ async function generateLetras() {
  * añade trigger 'LetraEnviada' al lead y marca status → 'enviada'.
  * Solo envía si han pasado al menos 15 minutos desde 'letraGeneratedAt'.
  */
-// src/server/scheduler.js
-// … (imports y generateLetras, processSequences igual)
-
 async function sendLetras() {
   try {
     const now = Date.now();
@@ -190,47 +187,29 @@ async function sendLetras() {
       if (!leadPhone || !letra || !letraGeneratedAt) continue;
 
       const genTime = letraGeneratedAt.toDate().getTime();
-      if (now - genTime < 15 * 60 * 1000) continue;
+      if (now - genTime < 15 * 60 * 1000) {
+        // Aún no pasan 15 minutos
+        continue;
+      }
 
       const sock = getWhatsAppSock();
       if (!sock) continue;
 
       const phone = leadPhone.replace(/\D/g, '');
       const jid = `${phone}@s.whatsapp.net`;
+
+      // Obtener primer nombre
       const firstName = (requesterName || '').trim().split(' ')[0];
 
       // 1) Mensaje de cierre
       const greeting = `Listo ${firstName}, ya terminé la letra para tu canción. *Léela y dime si te gusta.*`;
       await sock.sendMessage(jid, { text: greeting });
-      // ← Aquí añadimos el guardado en Firebase
-      await db
-        .collection('leads').doc(leadId).collection('messages')
-        .add({
-          content: greeting,
-          sender: 'business',
-          timestamp: new Date(),
-        });
 
       // 2) Enviar la letra
       await sock.sendMessage(jid, { text: letra });
-      await db
-        .collection('leads').doc(leadId).collection('messages')
-        .add({
-          content: letra,
-          sender: 'business',
-          timestamp: new Date(),
-        });
 
       // 3) Enviar el video
       await sock.sendMessage(jid, { video: { url: VIDEO_URL } });
-      await db
-        .collection('leads').doc(leadId).collection('messages')
-        .add({
-          mediaType: 'video',
-          mediaUrl: VIDEO_URL,
-          sender: 'business',
-          timestamp: new Date(),
-        });
 
       // 4) Mensaje promocional
       const promo = `${firstName} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $897 MXN.\n\n` +
@@ -240,17 +219,10 @@ async function sendLetras() {
         `🌐 Pago en línea o en dolares 🇺🇸 (45 USD):\n` +
         `https://cantalab.com/carrito-cantalab/?billing_id={{R}}`;
       await sock.sendMessage(jid, { text: promo });
-      await db
-        .collection('leads').doc(leadId).collection('messages')
-        .add({
-          content: promo,
-          sender: 'business',
-          timestamp: new Date(),
-        });
 
       console.log(`📤 sendLetras: letras y promoción enviadas a ${leadPhone}`);
 
-      // 5) Actualizar lead y secuencias
+      // 5) Actualizar lead
       if (leadId) {
         await db.collection('leads').doc(leadId).update({
           etiquetas: FieldValue.arrayUnion('LetraEnviada'),
@@ -270,7 +242,6 @@ async function sendLetras() {
     console.error("❌ Error en sendLetras:", err);
   }
 }
-
 
 export {
   processSequences,
