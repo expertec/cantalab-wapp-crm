@@ -200,9 +200,10 @@ export async function sendMessageToLead(phone, messageContent) {
     const sock = whatsappSock;
     if (!sock) throw new Error('No hay conexión activa con WhatsApp');
 
-    let number = phone;
-    if (!number.startsWith('521')) number = `521${number}`;
-    const jid = `${number}@s.whatsapp.net`;
+    
+
+    // `phone` ya viene en E.164 sin el “+” (ej. "18329559606" o "521234567890")
+     const jid = `${phone}@s.whatsapp.net`;
 
     // 1) Enviar por WhatsApp
     await sock.sendMessage(jid, { text: messageContent });

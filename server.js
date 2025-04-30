@@ -4,6 +4,7 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 
 dotenv.config();
 
@@ -55,12 +56,17 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
       return res.status(404).json({ error: "Lead no encontrado" });
     }
 
-    let { telefono } = leadDoc.data();
-    if (!telefono.startsWith('521')) {
-      telefono = `521${telefono}`;
+    // Normalizar número con libphonenumber-js
+    const raw = leadDoc.data().telefono;                           // Ej. "18329559606" o "+521234567890"
+    const input = raw.startsWith('+') ? raw : `+${raw}`;
+    const pn = parsePhoneNumberFromString(input);
+    if (!pn || !pn.isValid()) {
+      return res.status(400).json({ error: 'Teléfono inválido' });
     }
+    const e164 = pn.number.slice(1);                              // "18329559606" o "521234567890"
 
-    const result = await sendMessageToLead(telefono, message);
+    // Enviar mensaje
+    const result = await sendMessageToLead(e164, message);
     return res.json(result);
   } catch (error) {
     console.error("Error enviando mensaje de WhatsApp:", error);
