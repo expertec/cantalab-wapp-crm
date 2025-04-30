@@ -6,7 +6,19 @@ import dotenv from 'dotenv';
 import cron from 'node-cron';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from '@ffmpeg-installer/ffmpeg';
+
 dotenv.config();
+
+// ——— Configurar FFmpeg ———
+ffmpeg.setFfmpegPath(ffmpegPath.path);
+
+// Middleware para recibir archivos de audio
+const upload = multer({ dest: 'uploads/' });
 
 import { db } from './firebaseAdmin.js';
 import {
@@ -14,7 +26,7 @@ import {
   getLatestQR,
   getConnectionStatus,
   sendMessageToLead,
-  getSessionPhone      // ← importamos la nueva función
+  getSessionPhone
 } from './whatsappService.js';
 import {
   processSequences,
@@ -57,13 +69,13 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     }
 
     // Normalizar número con libphonenumber-js
-    const raw = leadDoc.data().telefono;                           // Ej. "18329559606" o "+521234567890"
+    const raw = leadDoc.data().telefono;
     const input = raw.startsWith('+') ? raw : `+${raw}`;
     const pn = parsePhoneNumberFromString(input);
     if (!pn || !pn.isValid()) {
       return res.status(400).json({ error: 'Teléfono inválido' });
     }
-    const e164 = pn.number.slice(1);                              // "18329559606" o "521234567890"
+    const e164 = pn.number.slice(1);
 
     // Enviar mensaje
     const result = await sendMessageToLead(e164, message);
@@ -81,15 +93,56 @@ app.post('/api/whatsapp/mark-read', async (req, res) => {
     return res.status(400).json({ error: "Falta leadId en el body" });
   }
   try {
-    await db.collection('leads')
-            .doc(leadId)
-            .update({ unreadCount: 0 });
+    await db.collection('leads').doc(leadId).update({ unreadCount: 0 });
     return res.json({ success: true });
   } catch (err) {
     console.error("Error marcando como leídos:", err);
     return res.status(500).json({ error: err.message });
   }
 });
+
+// ——— Endpoint para recibir y convertir nota de voz ———
+app.post(
+  '/api/whatsapp/send-audio',
+  upload.single('audio'),
+  async (req, res) => {
+    const { leadId } = req.body;
+    const tmpPath = req.file.path;
+
+    try {
+      // 1) Leer el .webm temporal
+      const webmBuffer = fs.readFileSync(tmpPath);
+      fs.unlinkSync(tmpPath);
+
+      // 2) Convertir a OGG/Opus
+      const tempIn  = path.join('uploads', `in-${Date.now()}.webm`);
+      const tempOut = path.join('uploads', `out-${Date.now()}.ogg`);
+      fs.writeFileSync(tempIn, webmBuffer);
+
+      await new Promise((resolve, reject) => {
+        ffmpeg(tempIn)
+          .noVideo()
+          .audioCodec('libopus')
+          .format('ogg')
+          .on('end', resolve)
+          .on('error', reject)
+          .save(tempOut);
+      });
+
+      fs.unlinkSync(tempIn);
+      const oggBuffer = fs.readFileSync(tempOut);
+      fs.unlinkSync(tempOut);
+
+      // 3) Enviar con Baileys como nota de voz
+      await sendMessageToLead(leadId, oggBuffer, 'audio/ogg; codecs=opus', { ptt: true });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('Error procesando audio:', err);
+      return res.status(500).json({ error: 'No se pudo procesar el audio' });
+    }
+  }
+);
 
 // Arranca el servidor y conecta WhatsApp
 app.listen(port, () => {
