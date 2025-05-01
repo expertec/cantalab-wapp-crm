@@ -16,221 +16,155 @@ import { db } from './firebaseAdmin.js';
 let latestQR = null;
 let connectionStatus = "Desconectado";
 let whatsappSock = null;
-let sessionPhone = null; // <— almacenará el número de la sesión activa
+let sessionPhone = null; // almacenará el número de la sesión activa
 
 const localAuthFolder = '/var/data';
-
-// Firestore FieldValue for increments
 const { FieldValue } = admin.firestore;
-
-// Asegúrate de que en firebaseAdmin.js ya hayas hecho admin.initializeApp(...)
 const bucket = admin.storage().bucket();
 
 export async function connectToWhatsApp() {
   try {
-    console.log("Verificando carpeta de autenticación en:", localAuthFolder);
+    // Asegurar carpeta de auth
     if (!fs.existsSync(localAuthFolder)) {
       fs.mkdirSync(localAuthFolder, { recursive: true });
-      console.log("Carpeta creada:", localAuthFolder);
-    } else {
-      console.log("Carpeta de autenticación existente:", localAuthFolder);
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(localAuthFolder);
 
-    // Extraer número de la sesión de las credenciales guardadas
+    // Extraer número de sesión
     if (state.creds.me?.id) {
       sessionPhone = state.creds.me.id.split('@')[0];
-      console.log("WhatsApp session phone:", sessionPhone);
     }
 
     const { version } = await fetchLatestBaileysVersion();
-
     const sock = makeWASocket({
       auth: state,
       logger: Pino({ level: 'info' }),
       printQRInTerminal: true,
       version,
     });
-
     whatsappSock = sock;
 
-    sock.ev.on('connection.update', (update) => {
-      const { connection, lastDisconnect, qr } = update;
+    // Manejo de conexión
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
       if (qr) {
         latestQR = qr;
         connectionStatus = "QR disponible. Escanéalo.";
         QRCode.generate(qr, { small: true });
-        console.log("QR generado, escanéalo.");
       }
       if (connection === 'open') {
         connectionStatus = "Conectado";
         latestQR = null;
-        // También se puede actualizar sessionPhone aquí si es necesario:
         if (sock.user?.id) {
           sessionPhone = sock.user.id.split('@')[0];
-          console.log("WhatsApp conectado. Sesión en:", sessionPhone);
         }
       }
       if (connection === 'close') {
         const reason = lastDisconnect?.error?.output?.statusCode;
         connectionStatus = "Desconectado";
-        console.log("Conexión cerrada. Razón:", reason);
         if (reason === DisconnectReason.loggedOut) {
-          // Limpiar credenciales
-          if (fs.existsSync(localAuthFolder)) {
-            fs.readdirSync(localAuthFolder).forEach(file =>
-              fs.rmSync(path.join(localAuthFolder, file), { recursive: true, force: true })
-            );
-            console.log("Estado de autenticación limpiado.");
-          }
+          fs.readdirSync(localAuthFolder).forEach(f =>
+            fs.rmSync(path.join(localAuthFolder, f), { force: true, recursive: true })
+          );
           sessionPhone = null;
-          connectToWhatsApp();
-        } else {
-          connectToWhatsApp();
         }
+        connectToWhatsApp();
       }
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Guarda mensajes entrantes (incluye los que envía el lead desde la app oficial)
-sock.ev.on('messages.upsert', async ({ messages, type }) => {
-  if (type !== 'notify') return;               // solo nuevos mensajes
-  for (const msg of messages) {
-    if (!msg.key || msg.key.fromMe) continue;  // saltar salientes
-    const jid = msg.key.remoteJid;
-    if (!jid || jid.endsWith('@g.us')) continue; // ignorar grupos
+    // Listener único para mensajes entrantes y guardado en Firestore
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
 
-    // 1) Extrae el número (sin sufijo @...)
-    const phone = jid.split('@')[0];
-
-    // 2) Extrae el texto (adapta si quieres otros tipos: image, audio, etc.)
-    const text = msg.message.conversation
-                ?? msg.message.extendedTextMessage?.text
-                ?? '';
-
-    // 3) Busca el lead por teléfono
-    const q = await db.collection('leads')
-                      .where('telefono', '==', phone)
-                      .limit(1)
-                      .get();
-    if (q.empty) continue;
-    const leadId = q.docs[0].id;
-
-    // 4) Guarda en /leads/{leadId}/messages
-    await db.collection('leads')
-            .doc(leadId)
-            .collection('messages')
-            .add({
-               content: text,
-               sender: 'lead',
-               timestamp: new Date()
-            });
-
-    // 5) Actualiza contadores si usas unreadCount o lastMessageAt
-    await db.collection('leads').doc(leadId).update({
-      lastMessageAt: new Date(),
-      unreadCount: admin.firestore.FieldValue.increment(1)
-    });
-  }
-});
-
-
-    sock.ev.on('messages.upsert', async (m) => {
-      console.log("Nuevo mensaje upsert:", JSON.stringify(m, null, 2));
-      for (const msg of m.messages) {
-        if (!msg.key) continue;
+      for (const msg of messages) {
+        if (!msg.key || msg.key.fromMe) continue;
         const jid = msg.key.remoteJid;
-        if (!jid || jid.endsWith('@g.us')) continue;        // ignorar grupos
-        if (msg.key.fromMe) continue;                       // ignorar mensajes salientes
+        if (!jid || jid.endsWith('@g.us')) continue;
 
-        try {
-          const leadRef = db.collection('leads').doc(jid);
-          const docSnap = await leadRef.get();
+        const phone = jid.split('@')[0];
+        let content = '';
+        let mediaType = null;
+        let mediaUrl = null;
 
-          // Obtener configuración global
-          const configSnap = await db.collection('config').doc('appConfig').get();
-          const cfg = configSnap.exists
-            ? configSnap.data()
-            : { autoSaveLeads: true, defaultTrigger: 'NuevoLead' };
-
-          // Crear lead si no existe
-          if (!docSnap.exists) {
-            const telefono = jid.split('@')[0];
-            const nombre = msg.pushName || "Sin nombre";
-
-            if (cfg.autoSaveLeads) {
-              const secuenciasActivas = [{
-                trigger: cfg.defaultTrigger || 'NuevoLead',
-                startTime: new Date().toISOString(),
-                index: 0
-              }];
-              await leadRef.set({
-                nombre,
-                telefono,
-                fecha_creacion: new Date(),
-                estado: 'nuevo',
-                source: 'WhatsApp',
-                etiquetas: [cfg.defaultTrigger || 'NuevoLead'],
-                secuenciasActivas,
-                unreadCount: 1,
-                lastMessageAt: new Date()
-              });
-              console.log("Nuevo lead guardado con unreadCount=1:", telefono);
-            } else {
-              console.log("AutoSaveLeads deshabilitado, no se guarda el lead:", telefono);
-            }
-          }
-
-          let mediaType = null;
-          let mediaUrl = null;
-          let content = '';
-
-          if (msg.message.imageMessage) {
-            mediaType = 'image';
-            const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-            const fileName = `images/${jid}-${Date.now()}.jpg`;
-            const file = bucket.file(fileName);
-            await file.save(buffer, { contentType: 'image/jpeg' });
-            const [url] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-            mediaUrl = url;
-            console.log("Imagen guardada:", fileName);
-          } else if (msg.message.audioMessage) {
-            mediaType = 'audio';
-            const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-            const fileName = `audios/${jid}-${Date.now()}.ogg`;
-            const file = bucket.file(fileName);
-            await file.save(buffer, { contentType: 'audio/ogg' });
-            const [url] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-            mediaUrl = url;
-            console.log("Audio guardado:", fileName);
-          } else {
-            content = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-          }
-
-          const newMessage = {
-            content,
-            mediaType,
-            mediaUrl,
-            sender: 'lead',
-            timestamp: new Date(),
-          };
-
-          await leadRef.collection('messages').add(newMessage);
-          await leadRef.update({
-            lastMessageAt: newMessage.timestamp,
-            unreadCount: FieldValue.increment(1)
-          });
-
-          console.log("Mensaje guardado y lead actualizado:", newMessage);
-        } catch (err) {
-          console.error("Error procesando mensaje:", err);
+        // Procesar imagen
+        if (msg.message.imageMessage) {
+          mediaType = 'image';
+          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
+          const fileName = `images/${phone}-${Date.now()}.jpg`;
+          const file = bucket.file(fileName);
+          await file.save(buffer, { contentType: 'image/jpeg' });
+          [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
         }
+        // Procesar audio
+        else if (msg.message.audioMessage) {
+          mediaType = 'audio';
+          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
+          const fileName = `audios/${phone}-${Date.now()}.ogg`;
+          const file = bucket.file(fileName);
+          await file.save(buffer, { contentType: 'audio/ogg' });
+          [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
+        }
+        // Procesar texto
+        else {
+          content = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        }
+
+        // Buscar lead existente
+        let leadId = null;
+        const q = await db.collection('leads')
+                        .where('telefono', '==', phone)
+                        .limit(1)
+                        .get();
+
+        // Si no existe y autoSave habilitado, crear nuevo lead
+        if (q.empty) {
+          const configSnap = await db.collection('config').doc('appConfig').get();
+          const cfg = configSnap.exists ? configSnap.data() : {};
+          if (cfg.autoSaveLeads) {
+            const newLead = await db.collection('leads').add({
+              telefono: phone,
+              nombre: msg.pushName || '',
+              source: 'WhatsApp',
+              fecha_creacion: new Date(),
+              estado: 'nuevo',
+              etiquetas: [cfg.defaultTrigger || 'NuevoLead'],
+              secuenciasActivas: [],
+              unreadCount: 0,
+              lastMessageAt: new Date()
+            });
+            leadId = newLead.id;
+          } else {
+            continue;
+          }
+        } else {
+          leadId = q.docs[0].id;
+        }
+
+        // Guardar mensaje en Firestore
+        const msgData = {
+          content,
+          mediaType,
+          mediaUrl,
+          sender: 'lead',
+          timestamp: new Date()
+        };
+        await db.collection('leads')
+                .doc(leadId)
+                .collection('messages')
+                .add(msgData);
+
+        // Actualizar meta del lead
+        await db.collection('leads')
+                .doc(leadId)
+                .update({
+                  lastMessageAt: msgData.timestamp,
+                  unreadCount: FieldValue.increment(1)
+                });
       }
     });
 
-    console.log("WhatsApp socket inicializado correctamente.");
     return sock;
   } catch (error) {
     console.error("Error al conectar con WhatsApp:", error);
@@ -240,35 +174,40 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
 
 export async function sendMessageToLead(phone, messageContent) {
   try {
-    const sock = whatsappSock;
-    if (!sock) throw new Error('No hay conexión activa con WhatsApp');
+    if (!whatsappSock) throw new Error('No hay conexión activa con WhatsApp');
+    // Normalizar E.164 sin '+'
+    let num = String(phone).replace(/\D/g, '');
+    if (num.length === 10) num = '52' + num;
+    const jid = `${num}@s.whatsapp.net`;
 
-    let number = phone;
-    if (!number.startsWith('521')) number = `521${number}`;
-    const jid = `${number}@s.whatsapp.net`;
+    // Enviar mensaje
+    await whatsappSock.sendMessage(jid, { text: messageContent });
 
-    // 1) Enviar por WhatsApp
-    await sock.sendMessage(jid, { text: messageContent });
-    console.log(`Mensaje enviado a ${jid}: ${messageContent}`);
+    // Guardar en Firestore bajo sender 'business'
+    const q = await db.collection('leads')
+                     .where('telefono', '==', num)
+                     .limit(1)
+                     .get();
+    if (!q.empty) {
+      const leadId = q.docs[0].id;
+      const outMsg = {
+        content: messageContent,
+        sender: 'business',
+        timestamp: new Date()
+      };
+      await db.collection('leads')
+              .doc(leadId)
+              .collection('messages')
+              .add(outMsg);
+      await db.collection('leads')
+              .doc(leadId)
+              .update({ lastMessageAt: outMsg.timestamp });
+    }
 
-    // 2) Guardar mensaje de salida + actualizar lastMessageAt
-    const leadRef = db.collection('leads').doc(jid);
-    const outMsg = {
-      content: messageContent,
-      sender: 'business',
-      timestamp: new Date(),
-    };
-    await leadRef.collection('messages').add(outMsg);
-    await leadRef.update({
-      lastMessageAt: outMsg.timestamp
-    });
-
-    console.log("Mensaje de salida guardado en Firebase:", outMsg);
-
-    return { success: true, message: 'Mensaje enviado a WhatsApp' };
+    return { success: true };
   } catch (error) {
     console.error("Error enviando mensaje de WhatsApp:", error);
-    throw new Error(`Error enviando mensaje: ${error.message}`);
+    throw error;
   }
 }
 
@@ -284,10 +223,6 @@ export function getWhatsAppSock() {
   return whatsappSock;
 }
 
-/**
- * Devuelve el número de teléfono de la sesión activa (sin prefijo @...).
- * Retorna null si no hay ninguna conexión abierta.
- */
 export function getSessionPhone() {
   return sessionPhone;
 }

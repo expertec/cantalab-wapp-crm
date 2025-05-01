@@ -13,7 +13,7 @@ import {
   getLatestQR,
   getConnectionStatus,
   sendMessageToLead,
-  getSessionPhone      // ← importamos la nueva función
+  getSessionPhone
 } from './whatsappService.js';
 import {
   processSequences,
@@ -48,6 +48,10 @@ app.get('/api/whatsapp/number', (req, res) => {
 // Endpoint para enviar mensaje de WhatsApp
 app.post('/api/whatsapp/send-message', async (req, res) => {
   const { leadId, message } = req.body;
+  if (!leadId || !message) {
+    return res.status(400).json({ error: 'Faltan leadId o message en el body' });
+  }
+
   try {
     const leadRef = db.collection('leads').doc(leadId);
     const leadDoc = await leadRef.get();
@@ -55,11 +59,12 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
       return res.status(404).json({ error: "Lead no encontrado" });
     }
 
-    let { telefono } = leadDoc.data();
-    if (!telefono.startsWith('521')) {
-      telefono = `521${telefono}`;
+    const { telefono } = leadDoc.data();
+    if (!telefono) {
+      return res.status(400).json({ error: "Lead sin número de teléfono" });
     }
 
+    // Delega la normalización y el guardado a sendMessageToLead
     const result = await sendMessageToLead(telefono, message);
     return res.json(result);
   } catch (error) {

@@ -107,6 +107,7 @@ async function processSequences() {
         const sendAt = new Date(startTime).getTime() + msg.delay * 60000;
         if (Date.now() < sendAt) continue;
 
+        // Enviar y luego registrar en Firestore
         await enviarMensaje(lead, msg);
         await db
           .collection('leads')
@@ -183,33 +184,42 @@ async function sendLetras() {
 
     for (const docSnap of snap.docs) {
       const data = docSnap.data();
-      const { leadPhone, leadId, letra, requesterName, letraGeneratedAt } = data;
+      let { leadPhone, leadId, letra, requesterName, letraGeneratedAt } = data;
       if (!leadPhone || !letra || !letraGeneratedAt) continue;
 
       const genTime = letraGeneratedAt.toDate().getTime();
-      if (now - genTime < 15 * 60 * 1000) {
-        // Aún no pasan 15 minutos
-        continue;
-      }
+      if (now - genTime < 15 * 60 * 1000) continue;
 
       const sock = getWhatsAppSock();
       if (!sock) continue;
 
-      const phone = leadPhone.replace(/\D/g, '');
-      const jid = `${phone}@s.whatsapp.net`;
-
-      // Obtener primer nombre
-      const firstName = (requesterName || '').trim().split(' ')[0];
+      const phoneClean = leadPhone.replace(/\D/g, '');
+      const jid = `${phoneClean}@s.whatsapp.net`;
+      const firstName = (requesterName || '').trim().split(' ')[0] || '';
 
       // 1) Mensaje de cierre
       const greeting = `Listo ${firstName}, ya terminé la letra para tu canción. *Léela y dime si te gusta.*`;
       await sock.sendMessage(jid, { text: greeting });
+      await db
+        .collection('leads').doc(leadId).collection('messages')
+        .add({ content: greeting, sender: 'business', timestamp: new Date() });
 
       // 2) Enviar la letra
       await sock.sendMessage(jid, { text: letra });
+      await db
+        .collection('leads').doc(leadId).collection('messages')
+        .add({ content: letra, sender: 'business', timestamp: new Date() });
 
       // 3) Enviar el video
       await sock.sendMessage(jid, { video: { url: VIDEO_URL } });
+      await db
+        .collection('leads').doc(leadId).collection('messages')
+        .add({
+          mediaType: 'video',
+          mediaUrl: VIDEO_URL,
+          sender: 'business',
+          timestamp: new Date()
+        });
 
       // 4) Mensaje promocional
       const promo = `${firstName} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $897 MXN.\n\n` +
@@ -219,8 +229,9 @@ async function sendLetras() {
         `🌐 Pago en línea o en dolares 🇺🇸 (45 USD):\n` +
         `https://cantalab.com/carrito-cantalab/?billing_id={{R}}`;
       await sock.sendMessage(jid, { text: promo });
-
-      console.log(`📤 sendLetras: letras y promoción enviadas a ${leadPhone}`);
+      await db
+        .collection('leads').doc(leadId).collection('messages')
+        .add({ content: promo, sender: 'business', timestamp: new Date() });
 
       // 5) Actualizar lead
       if (leadId) {
@@ -236,7 +247,6 @@ async function sendLetras() {
 
       // 6) Marcar documento como enviado
       await docSnap.ref.update({ status: 'enviada' });
-      console.log(`🔄 sendLetras: documento ${docSnap.id} marcado como 'enviada'`);
     }
   } catch (err) {
     console.error("❌ Error en sendLetras:", err);
