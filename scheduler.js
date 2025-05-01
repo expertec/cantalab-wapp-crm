@@ -22,7 +22,14 @@ const openai = new OpenAIApi(configuration);
  * {{campo}} se sustituye por leadData.campo si existe.
  */
 function replacePlaceholders(template, leadData) {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, field) => leadData[field] || '');
+  return template.replace(/\{\{(\w+)\}\}/g, (_, field) => {
+    const value = leadData[field] || '';
+    if (field === 'nombre') {
+      // devolver sólo la primera palabra del nombre completo
+      return value.split(' ')[0] || '';
+    }
+    return value;
+  });
 }
 
 /**
