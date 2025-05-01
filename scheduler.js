@@ -65,6 +65,13 @@ async function enviarMensaje(lead, mensaje) {
           image: { url: replacePlaceholders(mensaje.contenido, lead) }
         });
         break;
+      case 'video':
+        await sock.sendMessage(jid, {
+          video: { url: replacePlaceholders(mensaje.contenido, lead) },
+          // si quieres un caption, descomenta la línea siguiente y añade mensaje.contenidoCaption en tu secuencia
+          // caption: replacePlaceholders(mensaje.contenidoCaption || '', lead)
+        });
+        break;
       default:
         console.warn(`Tipo desconocido: ${mensaje.type}`);
     }
@@ -72,6 +79,7 @@ async function enviarMensaje(lead, mensaje) {
     console.error("Error al enviar mensaje:", err);
   }
 }
+
 
 /**
  * Procesa las secuencias activas de cada lead.
