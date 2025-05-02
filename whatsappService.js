@@ -22,6 +22,51 @@ const localAuthFolder = '/var/data';
 const { FieldValue } = admin.firestore;
 const bucket = admin.storage().bucket();
 
+function extractText(message) {
+  if (!message) return ''
+
+  // 1) Plain text
+  if (message.conversation) {
+    return message.conversation
+  }
+
+  // 2) Extended text (replies, forwards, etc)
+  if (message.extendedTextMessage?.text) {
+    return message.extendedTextMessage.text
+  }
+
+  // 3) Template buttons (quick reply buttons)
+  if (message.templateButtonReplyMessage?.selectedDisplayText) {
+    return message.templateButtonReplyMessage.selectedDisplayText
+  }
+
+  // 4) List responses
+  if (message.listResponseMessage?.singleSelectReply?.selectedRowText) {
+    return message.listResponseMessage.singleSelectReply.selectedRowText
+  }
+
+  // 5) Captions on media
+  if (message.imageMessage?.caption) {
+    return message.imageMessage.caption
+  }
+  if (message.videoMessage?.caption) {
+    return message.videoMessage.caption
+  }
+  if (message.documentMessage?.caption) {
+    return message.documentMessage.caption
+  }
+
+  // 6) Efímeros / viewOnce
+  if (message.ephemeralMessage?.message) {
+    return extractText(message.ephemeralMessage.message)
+  }
+  if (message.viewOnceMessage?.message?.ephemeralMessage?.message) {
+    return extractText(message.viewOnceMessage.message.ephemeralMessage.message)
+  }
+
+  return ''
+}
+
 export async function connectToWhatsApp() {
   try {
     // Asegurar carpeta de auth
@@ -119,9 +164,7 @@ export async function connectToWhatsApp() {
         }
         // 4) Texto
         else {
-          content = msg.message.conversation
-                  ?? msg.message.extendedTextMessage?.text
-                  ?? '';
+          content = extractText(msg.message)
         }
     
         // buscar o crear lead...
