@@ -159,7 +159,7 @@ async function generateLetras() {
     console.log(`✔️ generateLetras: encontrados ${snap.size} registros con status 'Sin letra'`);
     for (const docSnap of snap.docs) {
       const data = docSnap.data();
-      const prompt = `Escribe una letra de canción con lenguaje simple que su estructura sea verso 1, verso 2, coro, verso 3, verso 4 y coro. Agrega titulo de la canción en negritas. No pongas datos personales que no se puedan confirmar. Agrega un coro cantable y memorable. Solo responde con la letra de la canción sin texto adicional. Asegurate de incluir lo siguiente: Propósito: ${data.purpose}, Nombre: ${data.apodo}, Frases/Recuerdos: ${data.phrasesMemories}.`;
+      const prompt = `Escribe una letra de canción con lenguaje simple que su estructura sea verso 1, verso 2, coro, verso 3, verso 4 y coro. Agrega titulo de la canción en negritas. No pongas datos personales que no se puedan confirmar. Agrega un coro cantable y memorable. Solo responde con la letra de la canción sin texto adicional. Propósito: ${data.purpose}. Nombre: ${data.includeName}. Anecdotas o fraces: ${data.anecdotes}`;
       console.log(`📝 prompt para ${docSnap.id}:\n${prompt}`);
 
       const response = await openai.createChatCompletion({
@@ -237,9 +237,10 @@ async function sendLetras() {
         });
 
       // 4) Mensaje promocional
-      const promo = `${firstName} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $697 MXN.\n\n` +
+      const promo = `${firstName} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $897 MXN.\n\n` +
         `Puedes pagar en esta cuenta:\n\n🏦 Transferencia bancaria:\n` +
         `Cuenta: 4152 3143 2669 0826\nBanco: BBVA\nTitular: Iván Martínez Jiménez\n\n` +
+        `🧾 Para facturar a esta:\n\nCLABE: 012814001155051514\nBanco: BBVA\nTitular: UDEL UNIVERSIDAD SAPI DE CV\n\n` +
         `🌐 Pago en línea o en dolares 🇺🇸 (45 USD):\n` +
         `https://cantalab.com/carrito-cantalab/?billing_id={{R}}`;
       await sock.sendMessage(jid, { text: promo });
