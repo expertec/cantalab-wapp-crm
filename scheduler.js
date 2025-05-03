@@ -237,10 +237,9 @@ async function sendLetras() {
         });
 
       // 4) Mensaje promocional
-      const promo = `${firstName} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $897 MXN.\n\n` +
+      const promo = `${firstName} el costo normal es de $1997 MXN pero tenemos la promocional esta semana de $697 MXN.\n\n` +
         `Puedes pagar en esta cuenta:\n\n🏦 Transferencia bancaria:\n` +
         `Cuenta: 4152 3143 2669 0826\nBanco: BBVA\nTitular: Iván Martínez Jiménez\n\n` +
-        `🧾 Para facturar a esta:\n\nCLABE: 012814001155051514\nBanco: BBVA\nTitular: UDEL UNIVERSIDAD SAPI DE CV\n\n` +
         `🌐 Pago en línea o en dolares 🇺🇸 (45 USD):\n` +
         `https://cantalab.com/carrito-cantalab/?billing_id={{R}}`;
       await sock.sendMessage(jid, { text: promo });
