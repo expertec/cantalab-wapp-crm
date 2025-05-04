@@ -241,7 +241,7 @@ async function sendLetras() {
         `Puedes pagar en esta cuenta:\n\n🏦 Transferencia bancaria:\n` +
         `Cuenta: 4152 3143 2669 0826\nBanco: BBVA\nTitular: Iván Martínez Jiménez\n\n` +
         `🌐 Pago en línea o en dolares 🇺🇸 (45 USD):\n` +
-        `https://cantalab.com/carrito-cantalab/?billing_id={{R}}`;
+        `https://cantalab.com/tu-cancion-mx/`;
       await sock.sendMessage(jid, { text: promo });
       await db
         .collection('leads').doc(leadId).collection('messages')
