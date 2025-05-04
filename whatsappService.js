@@ -22,51 +22,6 @@ const localAuthFolder = '/var/data';
 const { FieldValue } = admin.firestore;
 const bucket = admin.storage().bucket();
 
-function extractText(message) {
-  if (!message) return ''
-
-  // 1) Plain text
-  if (message.conversation) {
-    return message.conversation
-  }
-
-  // 2) Extended text (replies, forwards, etc)
-  if (message.extendedTextMessage?.text) {
-    return message.extendedTextMessage.text
-  }
-
-  // 3) Template buttons (quick reply buttons)
-  if (message.templateButtonReplyMessage?.selectedDisplayText) {
-    return message.templateButtonReplyMessage.selectedDisplayText
-  }
-
-  // 4) List responses
-  if (message.listResponseMessage?.singleSelectReply?.selectedRowText) {
-    return message.listResponseMessage.singleSelectReply.selectedRowText
-  }
-
-  // 5) Captions on media
-  if (message.imageMessage?.caption) {
-    return message.imageMessage.caption
-  }
-  if (message.videoMessage?.caption) {
-    return message.videoMessage.caption
-  }
-  if (message.documentMessage?.caption) {
-    return message.documentMessage.caption
-  }
-
-  // 6) Efímeros / viewOnce
-  if (message.ephemeralMessage?.message) {
-    return extractText(message.ephemeralMessage.message)
-  }
-  if (message.viewOnceMessage?.message?.ephemeralMessage?.message) {
-    return extractText(message.viewOnceMessage.message.ephemeralMessage.message)
-  }
-
-  return ''
-}
-
 export async function connectToWhatsApp() {
   try {
     // Asegurar carpeta de auth
@@ -164,7 +119,9 @@ export async function connectToWhatsApp() {
         }
         // 4) Texto
         else {
-          content = extractText(msg.message)
+          content = msg.message.conversation
+                  ?? msg.message.extendedTextMessage?.text
+                  ?? '';
         }
     
         // buscar o crear lead...
@@ -265,4 +222,58 @@ export function getWhatsAppSock() {
 
 export function getSessionPhone() {
   return sessionPhone;
+}
+
+/**
+ * Envía una nota de voz en M4A, la sube a Firebase Storage y la guarda en Firestore.
+ * @param {string} phone    — número limpio (solo dígitos, con código de país).
+ * @param {string} filePath — ruta al archivo .m4a en el servidor.
+ */
+export async function sendAudioMessage(phone, filePath) {
+  const sock = getWhatsAppSock();
+  if (!sock) throw new Error('Socket de WhatsApp no está conectado');
+
+  const num = String(phone).replace(/\D/g, '');
+  const jid = `${num}@s.whatsapp.net`;
+
+  // 1) Leer y enviar por Baileys como audio/mp4
+  const audioBuffer = fs.readFileSync(filePath);
+  await sock.sendMessage(jid, {
+    audio: audioBuffer,
+    mimetype: 'audio/mp4',
+    ptt: true,    // ← activa el modo nota de voz
+  });
+
+  // 2) Subir a Firebase Storage
+  const bucket = admin.storage().bucket();
+  const dest   = `audios/${num}-${Date.now()}.m4a`;
+  const file   = bucket.file(dest);
+  await file.save(audioBuffer, { contentType: 'audio/mp4' });
+  const [mediaUrl] = await file.getSignedUrl({
+    action: 'read',
+    expires: '03-01-2500'
+  });
+
+  // 3) Guardar en Firestore
+  const q = await db.collection('leads')
+                    .where('telefono', '==', num)
+                    .limit(1)
+                    .get();
+  if (!q.empty) {
+    const leadId = q.docs[0].id;
+    const msgData = {
+      content: '',
+      mediaType: 'audio',
+      mediaUrl,
+      sender: 'business',
+      timestamp: new Date()
+    };
+    await db.collection('leads')
+            .doc(leadId)
+            .collection('messages')
+            .add(msgData);
+    await db.collection('leads')
+            .doc(leadId)
+            .update({ lastMessageAt: msgData.timestamp });
+  }
 }

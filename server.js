@@ -4,6 +4,18 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+
+// Dile a fluent-ffmpeg dónde está el binario
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+
+import { sendAudioMessage } from './whatsappService.js';  // ajusta ruta si es necesario
+
 
 dotenv.config();
 
@@ -23,6 +35,8 @@ import {
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+const upload = multer({ dest: path.resolve('./uploads') });
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -72,6 +86,47 @@ app.post('/api/whatsapp/send-message', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
+
+// Recibe el audio, lo convierte a M4A y lo envía por Baileys
+app.post(
+  '/api/whatsapp/send-audio',
+  upload.single('audio'),
+  async (req, res) => {
+    const { phone } = req.body;
+    const uploadPath = req.file.path;           // WebM/Opus crudo
+    const m4aPath   = `${uploadPath}.m4a`;      // destino M4A
+
+    try {
+      // 1) Transcodifica a M4A (AAC)
+      await new Promise((resolve, reject) => {
+        ffmpeg(uploadPath)
+          .outputOptions(['-c:a aac', '-vn'])
+          .toFormat('mp4')
+          .save(m4aPath)
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      // 2) Envía la nota de voz ya en M4A
+      await sendAudioMessage(phone, m4aPath);
+
+      // 3) Borra archivos temporales
+      fs.unlinkSync(uploadPath);
+      fs.unlinkSync(m4aPath);
+
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Error enviando audio:', error);
+      // limpia lo que haya quedado
+      try { fs.unlinkSync(uploadPath); } catch {}
+      try { fs.unlinkSync(m4aPath); }   catch {}
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+
+
 
 // (Opcional) Marcar todos los mensajes de un lead como leídos
 app.post('/api/whatsapp/mark-read', async (req, res) => {
