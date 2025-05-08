@@ -22,6 +22,14 @@ const localAuthFolder = '/var/data';
 const { FieldValue } = admin.firestore;
 const bucket = admin.storage().bucket();
 
+export function clearSession() {
+  if (fs.existsSync(localAuthFolder)) {
+    fs.rmSync(localAuthFolder, { recursive: true, force: true });
+  }
+  // Recrear la carpeta vacía para evitar errores
+  fs.mkdirSync(localAuthFolder, { recursive: true });
+}
+
 export async function connectToWhatsApp() {
   try {
     // Asegurar carpeta de auth
@@ -63,11 +71,10 @@ export async function connectToWhatsApp() {
         const reason = lastDisconnect?.error?.output?.statusCode;
         connectionStatus = "Desconectado";
         if (reason === DisconnectReason.loggedOut) {
-          fs.readdirSync(localAuthFolder).forEach(f =>
-            fs.rmSync(path.join(localAuthFolder, f), { force: true, recursive: true })
-          );
-          sessionPhone = null;
-        }
+               // Al hacer logout desde WhatsApp, limpiar la sesión guardada
+               clearSession();
+               sessionPhone = null;
+             }
         connectToWhatsApp();
       }
     });

@@ -20,12 +20,14 @@ import { sendAudioMessage } from './whatsappService.js';  // ajusta ruta si es n
 dotenv.config();
 
 import { db } from './firebaseAdmin.js';
+// Al principio de server.js
 import {
   connectToWhatsApp,
   getLatestQR,
   getConnectionStatus,
   sendMessageToLead,
-  getSessionPhone
+  getSessionPhone,
+  clearSession        // ← agrégalo aquí
 } from './whatsappService.js';
 import {
   processSequences,
@@ -58,6 +60,18 @@ app.get('/api/whatsapp/number', (req, res) => {
     res.status(503).json({ error: 'WhatsApp no conectado' });
   }
 });
+
+// Nuevo endpoint para eliminar la sesión de WhatsApp
+app.post('/api/whatsapp/clear-session', (req, res) => {
+  try {
+    clearSession();
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error borrando sesión:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 // Endpoint para enviar mensaje de WhatsApp
 app.post('/api/whatsapp/send-message', async (req, res) => {
