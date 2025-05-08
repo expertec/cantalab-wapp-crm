@@ -187,6 +187,28 @@ else if (msg.message.documentMessage?.mimetype === 'application/pdf') {
   }
 }
 
+/**
+ * Cierra la sesión remota en WhatsApp (sin tocar archivos en disco)
+ * y vuelve a arrancar la conexión, lo que genera un nuevo QR.
+ */
+export async function regenerateQR() {
+  if (whatsappSock) {
+    try {
+      // Logout remota en WhatsApp, invalida la sesión en el servidor
+      await whatsappSock.logout();
+    } catch (err) {
+      console.warn('Error haciendo logout en Baileys:', err);
+    }
+    // Limpiar el socket en memoria
+    whatsappSock.ev.removeAllListeners();
+    whatsappSock = null;
+  }
+  // Reconectar (usará los mismos archivos de localAuthFolder)
+  const sock = await connectToWhatsApp();
+  return sock;
+}
+
+
 export async function sendMessageToLead(phone, messageContent) {
   try {
     if (!whatsappSock) throw new Error('No hay conexión activa con WhatsApp');
