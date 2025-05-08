@@ -72,6 +72,23 @@ app.post('/api/whatsapp/clear-session', (req, res) => {
   }
 });
 
+// POST /api/whatsapp/generate-qr  
+app.post('/api/whatsapp/generate-qr', async (req, res) => {
+  try {
+    // 1) Limpia la sesión antigua
+    clearSession();
+    // 2) Reconecta para que Baileys genere un nuevo QR
+    const sock = await connectToWhatsApp();
+    // 3) Extrae el QR actual (puede llegar a tardar ms hasta que се emita)
+    const qr = getLatestQR();
+    const status = getConnectionStatus();
+    return res.json({ success: true, qr, status });
+  } catch (err) {
+    console.error('Error generando QR:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 // Endpoint para enviar mensaje de WhatsApp
 app.post('/api/whatsapp/send-message', async (req, res) => {
