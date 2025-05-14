@@ -81,7 +81,7 @@ export async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Listener único para mensajes entrantes y guardado en Firestore
+   
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
     
@@ -124,17 +124,15 @@ export async function connectToWhatsApp() {
           await file.save(buffer, { contentType: 'audio/ogg' });
           [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
         }
-
         // 4) PDF
-else if (msg.message.documentMessage?.mimetype === 'application/pdf') {
-  mediaType = 'pdf';
-  const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-  const fileName = `pdfs/${phone}-${Date.now()}.pdf`;
-  const file = bucket.file(fileName);
-  await file.save(buffer, { contentType: 'application/pdf' });
-  [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-}
-
+        else if (msg.message.documentMessage?.mimetype === 'application/pdf') {
+          mediaType = 'pdf';
+          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
+          const fileName = `pdfs/${phone}-${Date.now()}.pdf`;
+          const file = bucket.file(fileName);
+          await file.save(buffer, { contentType: 'application/pdf' });
+          [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
+        }
         // 5) Texto
         else {
           content = msg.message.conversation
@@ -152,14 +150,22 @@ else if (msg.message.documentMessage?.mimetype === 'application/pdf') {
           const cfgSnap = await db.collection('config').doc('appConfig').get();
           const cfg = cfgSnap.exists ? cfgSnap.data() : {};
           if (!cfg.autoSaveLeads) continue;
+    
+          const trigger = cfg.defaultTrigger || 'NuevoLead';
+          const nowIso = new Date().toISOString();
+    
           const newLead = await db.collection('leads').add({
             telefono: phone,
             nombre: msg.pushName || '',
             source: 'WhatsApp',
             fecha_creacion: new Date(),
             estado: 'nuevo',
-            etiquetas: [cfg.defaultTrigger || 'NuevoLead'],
-            secuenciasActivas: [],
+            etiquetas: [trigger],
+            secuenciasActivas: [{
+              trigger,
+              startTime: nowIso,
+              index: 0
+            }],
             unreadCount: 0,
             lastMessageAt: new Date()
           });
@@ -178,6 +184,8 @@ else if (msg.message.documentMessage?.mimetype === 'application/pdf') {
         await db.collection('leads').doc(leadId).update(updateData);
       }
     });
+    
+    
     
 
     return sock;
