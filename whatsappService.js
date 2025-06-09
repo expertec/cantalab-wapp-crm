@@ -1,50 +1,31 @@
-// whatsappService.js
-import {
-  makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  downloadMediaMessage
-} from '@whiskeysockets/baileys';
+// server/whatsappService.js
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode-terminal';
 import Pino from 'pino';
 import fs from 'fs';
 import path from 'path';
-import admin from 'firebase-admin';
 import { db } from './firebaseAdmin.js';
 
 let latestQR = null;
 let connectionStatus = "Desconectado";
 let whatsappSock = null;
-let sessionPhone = null; // almacenará el número de la sesión activa
-
 const localAuthFolder = '/var/data';
-const { FieldValue } = admin.firestore;
-const bucket = admin.storage().bucket();
-
-export function clearSession() {
-  if (fs.existsSync(localAuthFolder)) {
-    fs.rmSync(localAuthFolder, { recursive: true, force: true });
-  }
-  // Recrear la carpeta vacía para evitar errores
-  fs.mkdirSync(localAuthFolder, { recursive: true });
-}
 
 export async function connectToWhatsApp() {
   try {
-    // Asegurar carpeta de auth
+    console.log("Verificando carpeta de autenticación en:", localAuthFolder);
     if (!fs.existsSync(localAuthFolder)) {
       fs.mkdirSync(localAuthFolder, { recursive: true });
+      console.log("Carpeta creada:", localAuthFolder);
+    } else {
+      console.log("Carpeta de autenticación existente:", localAuthFolder);
     }
-
+    console.log("Obteniendo estado de autenticación...");
     const { state, saveCreds } = await useMultiFileAuthState(localAuthFolder);
-
-    // Extraer número de sesión
-    if (state.creds.me?.id) {
-      sessionPhone = state.creds.me.id.split('@')[0];
-    }
-
+    console.log("Obteniendo la última versión de Baileys...");
     const { version } = await fetchLatestBaileysVersion();
+    console.log("Versión obtenida:", version);
+    console.log("Intentando conectar con WhatsApp...");
     const sock = makeWASocket({
       auth: state,
       logger: Pino({ level: 'info' }),
@@ -53,205 +34,154 @@ export async function connectToWhatsApp() {
     });
     whatsappSock = sock;
 
-    // Manejo de conexión
-    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    sock.ev.on('connection.update', (update) => {
+      console.log("connection.update:", update);
+      const { connection, lastDisconnect, qr } = update;
       if (qr) {
         latestQR = qr;
         connectionStatus = "QR disponible. Escanéalo.";
         QRCode.generate(qr, { small: true });
+        console.log("QR generado, escanéalo.");
       }
       if (connection === 'open') {
         connectionStatus = "Conectado";
         latestQR = null;
-        if (sock.user?.id) {
-          sessionPhone = sock.user.id.split('@')[0];
-        }
+        console.log("Conexión exitosa con WhatsApp!");
       }
       if (connection === 'close') {
         const reason = lastDisconnect?.error?.output?.statusCode;
         connectionStatus = "Desconectado";
+        console.log("Conexión cerrada. Razón:", reason);
         if (reason === DisconnectReason.loggedOut) {
-               // Al hacer logout desde WhatsApp, limpiar la sesión guardada
-               clearSession();
-               sessionPhone = null;
-             }
-        connectToWhatsApp();
-      }
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-
-   
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return;
-    
-      for (const msg of messages) {
-        if (!msg.key) continue;
-        const jid = msg.key.remoteJid;
-        if (!jid || jid.endsWith('@g.us')) continue; // ignorar grupos
-    
-        const phone = jid.split('@')[0];
-        const sender = msg.key.fromMe ? 'business' : 'lead';
-    
-        let content = '';
-        let mediaType = null;
-        let mediaUrl = null;
-    
-        // 1) Video
-        if (msg.message.videoMessage) {
-          mediaType = 'video';
-          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-          const fileName = `videos/${phone}-${Date.now()}.mp4`;
-          const file = bucket.file(fileName);
-          await file.save(buffer, { contentType: 'video/mp4' });
-          [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-        }
-        // 2) Imagen
-        else if (msg.message.imageMessage) {
-          mediaType = 'image';
-          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-          const fileName = `images/${phone}-${Date.now()}.jpg`;
-          const file = bucket.file(fileName);
-          await file.save(buffer, { contentType: 'image/jpeg' });
-          [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-        }
-        // 3) Audio
-        else if (msg.message.audioMessage) {
-          mediaType = 'audio';
-          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-          const fileName = `audios/${phone}-${Date.now()}.ogg`;
-          const file = bucket.file(fileName);
-          await file.save(buffer, { contentType: 'audio/ogg' });
-          [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-        }
-        // 4) PDF
-        else if (msg.message.documentMessage?.mimetype === 'application/pdf') {
-          mediaType = 'pdf';
-          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: Pino() });
-          const fileName = `pdfs/${phone}-${Date.now()}.pdf`;
-          const file = bucket.file(fileName);
-          await file.save(buffer, { contentType: 'application/pdf' });
-          [mediaUrl] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-        }
-        // 5) Texto
-        else {
-          content = msg.message.conversation
-                  ?? msg.message.extendedTextMessage?.text
-                  ?? '';
-        }
-    
-        // buscar o crear lead...
-        let leadId = null;
-        const q = await db.collection('leads')
-                        .where('telefono', '==', phone)
-                        .limit(1)
-                        .get();
-        if (q.empty) {
-          const cfgSnap = await db.collection('config').doc('appConfig').get();
-          const cfg = cfgSnap.exists ? cfgSnap.data() : {};
-          if (!cfg.autoSaveLeads) continue;
-    
-          const trigger = cfg.defaultTrigger || 'NuevoLead';
-          const nowIso = new Date().toISOString();
-    
-          const newLead = await db.collection('leads').add({
-            telefono: phone,
-            nombre: msg.pushName || '',
-            source: 'WhatsApp',
-            fecha_creacion: new Date(),
-            estado: 'nuevo',
-            etiquetas: [trigger],
-            secuenciasActivas: [{
-              trigger,
-              startTime: nowIso,
-              index: 0
-            }],
-            unreadCount: 0,
-            lastMessageAt: new Date()
-          });
-          leadId = newLead.id;
+          console.log("La sesión se cerró (loggedOut). Limpiando estado de autenticación...");
+          try {
+            if (fs.existsSync(localAuthFolder)) {
+              const files = fs.readdirSync(localAuthFolder);
+              for (const file of files) {
+                fs.rmSync(path.join(localAuthFolder, file), { recursive: true, force: true });
+              }
+              console.log("Estado de autenticación limpiado.");
+            }
+          } catch (error) {
+            console.error("Error limpiando el estado:", error);
+          }
+          console.log("Conectando a una nueva cuenta de WhatsApp...");
+          connectToWhatsApp();
         } else {
-          leadId = q.docs[0].id;
+          console.log("Reconectando...");
+          connectToWhatsApp();
         }
-    
-        // guardar mensaje
-        const msgData = { content, mediaType, mediaUrl, sender, timestamp: new Date() };
-        await db.collection('leads').doc(leadId).collection('messages').add(msgData);
-    
-        // actualizar lead
-        const updateData = { lastMessageAt: msgData.timestamp };
-        if (sender === 'lead') updateData.unreadCount = FieldValue.increment(1);
-        await db.collection('leads').doc(leadId).update(updateData);
       }
     });
-    
-    
-    
 
+    sock.ev.on('creds.update', (creds) => {
+      console.log("Credenciales actualizadas:", creds);
+      saveCreds();
+    });
+
+    // ===== Registro y activación de leads =====
+    sock.ev.on('messages.upsert', async (m) => {
+      console.log("Nuevo mensaje recibido:", JSON.stringify(m, null, 2));
+
+      // Primero, obtenemos la configuración global
+      let config = { autoSaveLeads: true, defaultTrigger: "NuevoLead" };
+      try {
+        const configSnap = await db.collection("config").doc("appConfig").get();
+        if (configSnap.exists) {
+          config = { ...config, ...configSnap.data() };
+        } else {
+          console.log("No se encontró 'appConfig', usando valores por defecto.");
+        }
+      } catch (error) {
+        console.error("Error al obtener configuración:", error);
+      }
+      
+      // Si no está activado el guardado automático, salimos
+      if (!config.autoSaveLeads) {
+        console.log("Guardado automático de leads desactivado en configuración.");
+        return;
+      }
+
+      // Obtenemos los triggers disponibles en la colección "secuencias"
+      let secuenciasQuerySnapshot;
+      try {
+        secuenciasQuerySnapshot = await db.collection("secuencias").get();
+      } catch (err) {
+        console.error("Error al obtener secuencias:", err);
+        return;
+      }
+      const availableTriggers = secuenciasQuerySnapshot.docs.map(doc => doc.data().trigger);
+      const triggerDefault = config.defaultTrigger || "NuevoLead";
+      
+      for (const msg of m.messages) {
+        // Procesamos solo mensajes entrantes (no enviados por nosotros)
+        if (msg.key && !msg.key.fromMe) {
+          const jid = msg.key.remoteJid;
+          // Ignorar mensajes de grupos
+          if (jid.endsWith('@g.us')) {
+            console.log("Mensaje de grupo recibido, se ignora.");
+            continue;
+          }
+          try {
+            const leadRef = db.collection('leads').doc(jid);
+            const docSnap = await leadRef.get();
+            if (!docSnap.exists) {
+              const telefono = jid.split('@')[0];
+              const nombre = msg.pushName || "Sin nombre";
+              const etiquetas = [triggerDefault];
+              const secuenciasAAgregar = [];
+              etiquetas.forEach(tag => {
+                if (availableTriggers.includes(tag)) {
+                  secuenciasAAgregar.push({
+                    trigger: tag,
+                    startTime: new Date().toISOString(),
+                    index: 0
+                  });
+                }
+              });
+              const nuevoLead = {
+                nombre,
+                telefono,
+                fecha_creacion: new Date(),
+                estado: "nuevo",
+                etiquetas,
+                secuenciasActivas: secuenciasAAgregar,
+                source: "WhatsApp"
+              };
+              await leadRef.set(nuevoLead);
+              console.log("Nuevo lead guardado:", nuevoLead);
+            } else {
+              console.log("Lead ya existente:", jid);
+              const leadData = docSnap.data();
+              const secuencias = leadData.secuenciasActivas || [];
+              // Si no tiene activada la secuencia con el trigger configurado, se agrega
+              if (!secuencias.some(seq => seq.trigger === triggerDefault)) {
+                if (availableTriggers.includes(triggerDefault)) {
+                  secuencias.push({
+                    trigger: triggerDefault,
+                    startTime: new Date().toISOString(),
+                    index: 0
+                  });
+                  const etiquetas = leadData.etiquetas || [];
+                  if (!etiquetas.includes(triggerDefault)) etiquetas.push(triggerDefault);
+                  await leadRef.update({
+                    secuenciasActivas: secuencias,
+                    etiquetas
+                  });
+                  console.log("Secuencia activada para lead existente:", jid);
+                }
+              }
+            }
+          } catch (error) {
+            console.error("Error registrando lead:", error);
+          }
+        }
+      }
+    });
+    console.log("Conexión de WhatsApp establecida, retornando socket.");
     return sock;
   } catch (error) {
     console.error("Error al conectar con WhatsApp:", error);
-    throw error;
-  }
-}
-
-/**
- * Cierra la sesión remota en WhatsApp (sin tocar archivos en disco)
- * y vuelve a arrancar la conexión, lo que genera un nuevo QR.
- */
-export async function regenerateQR() {
-  if (whatsappSock) {
-    try {
-      // Logout remota en WhatsApp, invalida la sesión en el servidor
-      await whatsappSock.logout();
-    } catch (err) {
-      console.warn('Error haciendo logout en Baileys:', err);
-    }
-    // Limpiar el socket en memoria
-    whatsappSock.ev.removeAllListeners();
-    whatsappSock = null;
-  }
-  // Reconectar (usará los mismos archivos de localAuthFolder)
-  const sock = await connectToWhatsApp();
-  return sock;
-}
-
-
-export async function sendMessageToLead(phone, messageContent) {
-  try {
-    if (!whatsappSock) throw new Error('No hay conexión activa con WhatsApp');
-    // Normalizar E.164 sin '+'
-    let num = String(phone).replace(/\D/g, '');
-    if (num.length === 10) num = '52' + num;
-    const jid = `${num}@s.whatsapp.net`;
-
-    // Enviar mensaje
-    await whatsappSock.sendMessage(jid, { text: messageContent });
-
-    // Guardar en Firestore bajo sender 'business'
-    const q = await db.collection('leads')
-                     .where('telefono', '==', num)
-                     .limit(1)
-                     .get();
-    if (!q.empty) {
-      const leadId = q.docs[0].id;
-      const outMsg = {
-        content: messageContent,
-        sender: 'business',
-        timestamp: new Date()
-      };
-      await db.collection('leads')
-              .doc(leadId)
-              .collection('messages')
-              .add(outMsg);
-      await db.collection('leads')
-              .doc(leadId)
-              .update({ lastMessageAt: outMsg.timestamp });
-    }
-
-    return { success: true };
-  } catch (error) {
-    console.error("Error enviando mensaje de WhatsApp:", error);
     throw error;
   }
 }
@@ -266,62 +196,4 @@ export function getConnectionStatus() {
 
 export function getWhatsAppSock() {
   return whatsappSock;
-}
-
-export function getSessionPhone() {
-  return sessionPhone;
-}
-
-/**
- * Envía una nota de voz en M4A, la sube a Firebase Storage y la guarda en Firestore.
- * @param {string} phone    — número limpio (solo dígitos, con código de país).
- * @param {string} filePath — ruta al archivo .m4a en el servidor.
- */
-export async function sendAudioMessage(phone, filePath) {
-  const sock = getWhatsAppSock();
-  if (!sock) throw new Error('Socket de WhatsApp no está conectado');
-
-  const num = String(phone).replace(/\D/g, '');
-  const jid = `${num}@s.whatsapp.net`;
-
-  // 1) Leer y enviar por Baileys como audio/mp4
-  const audioBuffer = fs.readFileSync(filePath);
-  await sock.sendMessage(jid, {
-    audio: audioBuffer,
-    mimetype: 'audio/mp4',
-    ptt: true,    // ← activa el modo nota de voz
-  });
-
-  // 2) Subir a Firebase Storage
-  const bucket = admin.storage().bucket();
-  const dest   = `audios/${num}-${Date.now()}.m4a`;
-  const file   = bucket.file(dest);
-  await file.save(audioBuffer, { contentType: 'audio/mp4' });
-  const [mediaUrl] = await file.getSignedUrl({
-    action: 'read',
-    expires: '03-01-2500'
-  });
-
-  // 3) Guardar en Firestore
-  const q = await db.collection('leads')
-                    .where('telefono', '==', num)
-                    .limit(1)
-                    .get();
-  if (!q.empty) {
-    const leadId = q.docs[0].id;
-    const msgData = {
-      content: '',
-      mediaType: 'audio',
-      mediaUrl,
-      sender: 'business',
-      timestamp: new Date()
-    };
-    await db.collection('leads')
-            .doc(leadId)
-            .collection('messages')
-            .add(msgData);
-    await db.collection('leads')
-            .doc(leadId)
-            .update({ lastMessageAt: msgData.timestamp });
-  }
 }

@@ -1,48 +1,41 @@
-// server.js
+// server/server.js
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import fs from 'fs';
+import path from 'path';
+import axios from 'axios';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-
-// Dile a fluent-ffmpeg dónde está el binario
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-
-
-import { sendAudioMessage } from './whatsappService.js';  // ajusta ruta si es necesario
-
 
 dotenv.config();
 
+// Importar Firebase Admin
 import { db } from './firebaseAdmin.js';
-// Al principio de server.js
-import {
-  connectToWhatsApp,
-  getLatestQR,
-  getConnectionStatus,
-  sendMessageToLead,
-  getSessionPhone,
-  regenerateQR
-} from './whatsappService.js';
 
-import {
-  processSequences,
-  generateLetras,
-  sendLetras
-} from './scheduler.js';
+// Importar integración con WhatsApp y funciones para PDF y estrategia
+import { connectToWhatsApp, getLatestQR, getConnectionStatus, getWhatsAppSock } from './whatsappService.js';
+import { generarEstrategia } from './chatGpt.js';
+import { generatePDF } from './utils/generatePDF.js';
+
+// O, si prefieres usar el otro método:
+// import { generateStrategyPDF } from './utils/generateStrategyPDF.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-const upload = multer({ dest: path.resolve('./uploads') });
-
 app.use(cors());
 app.use(bodyParser.json());
+
+// Endpoint de depuración para verificar el archivo secreto de Firebase
+app.get('/api/debug-env', (req, res) => {
+  const firebaseKeyPath = path.join('/etc/secrets', 'serviceAccountKey.json');
+  const exists = fs.existsSync(firebaseKeyPath);
+  res.json({
+    archivoSecreto: exists ? "Archivo de llave de Firebase OK" : "No se encontró el archivo secreto",
+    ruta: firebaseKeyPath
+  });
+});
 
 // Endpoint para consultar el estado de WhatsApp (QR y conexión)
 app.get('/api/whatsapp/status', (req, res) => {
@@ -52,154 +45,266 @@ app.get('/api/whatsapp/status', (req, res) => {
   });
 });
 
-// Nuevo endpoint para obtener el número de sesión
-app.get('/api/whatsapp/number', (req, res) => {
-  const phone = getSessionPhone();
-  if (phone) {
-    res.json({ phone });
-  } else {
-    res.status(503).json({ error: 'WhatsApp no conectado' });
-  }
-});
-
-// POST /api/whatsapp/generate-qr
-// POST /api/whatsapp/generate-qr
-app.post('/api/whatsapp/generate-qr', async (req, res) => {
+// Endpoint para iniciar la conexión con WhatsApp
+app.get('/api/whatsapp/connect', async (req, res) => {
   try {
-    // 1) Logout remoto e invalidar la sesión en WhatsApp
-    await regenerateQR();
-    // 2) Obtener el nuevo QR y estado
-    const qr     = getLatestQR();
-    const status = getConnectionStatus();
-    // 3) Devolverlos al frontend
-    return res.json({ success: true, qr, status });
-  } catch (err) {
-    console.error('Error regenerando QR:', err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-
-
-
-
-// Endpoint para enviar mensaje de WhatsApp
-app.post('/api/whatsapp/send-message', async (req, res) => {
-  const { leadId, message } = req.body;
-  if (!leadId || !message) {
-    return res.status(400).json({ error: 'Faltan leadId o message en el body' });
-  }
-
-  try {
-    const leadRef = db.collection('leads').doc(leadId);
-    const leadDoc = await leadRef.get();
-    if (!leadDoc.exists) {
-      return res.status(404).json({ error: "Lead no encontrado" });
-    }
-
-    const { telefono } = leadDoc.data();
-    if (!telefono) {
-      return res.status(400).json({ error: "Lead sin número de teléfono" });
-    }
-
-    // Delega la normalización y el guardado a sendMessageToLead
-    const result = await sendMessageToLead(telefono, message);
-    return res.json(result);
+    await connectToWhatsApp();
+    res.json({
+      status: "Conectado",
+      message: "Conexión iniciada. Espera el QR si aún no estás conectado."
+    });
   } catch (error) {
-    console.error("Error enviando mensaje de WhatsApp:", error);
-    return res.status(500).json({ error: error.message });
+    console.error("Error al conectar con WhatsApp:", error);
+    res.status(500).json({
+      status: "Error",
+      message: "Error al conectar con WhatsApp."
+    });
   }
 });
 
-// Recibe el audio, lo convierte a M4A y lo envía por Baileys
-app.post(
-  '/api/whatsapp/send-audio',
-  upload.single('audio'),
-  async (req, res) => {
-    const { phone } = req.body;
-    const uploadPath = req.file.path;           // WebM/Opus crudo
-    const m4aPath   = `${uploadPath}.m4a`;      // destino M4A
-
-    try {
-      // 1) Transcodifica a M4A (AAC)
-      await new Promise((resolve, reject) => {
-        ffmpeg(uploadPath)
-          .outputOptions(['-c:a aac', '-vn'])
-          .toFormat('mp4')
-          .save(m4aPath)
-          .on('end', resolve)
-          .on('error', reject);
-      });
-
-      // 2) Envía la nota de voz ya en M4A
-      await sendAudioMessage(phone, m4aPath);
-
-      // 3) Borra archivos temporales
-      fs.unlinkSync(uploadPath);
-      fs.unlinkSync(m4aPath);
-
-      return res.json({ success: true });
-    } catch (error) {
-      console.error('Error enviando audio:', error);
-      // limpia lo que haya quedado
-      try { fs.unlinkSync(uploadPath); } catch {}
-      try { fs.unlinkSync(m4aPath); }   catch {}
-      return res.status(500).json({ success: false, error: error.message });
-    }
-  }
-);
-
-
-
-
-// (Opcional) Marcar todos los mensajes de un lead como leídos
-app.post('/api/whatsapp/mark-read', async (req, res) => {
-  const { leadId } = req.body;
-  if (!leadId) {
-    return res.status(400).json({ error: "Falta leadId en el body" });
-  }
+// Endpoint para enviar mensaje de texto
+app.get('/api/whatsapp/send/text', async (req, res) => {
   try {
-    await db.collection('leads')
-            .doc(leadId)
-            .update({ unreadCount: 0 });
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("Error marcando como leídos:", err);
-    return res.status(500).json({ error: err.message });
+    const phone = req.query.phone;
+    if (!phone) {
+      return res.status(400).json({ error: "El parámetro phone es requerido" });
+    }
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
+    }
+    let number = phone;
+    if (!number.startsWith('521')) {
+      number = `521${number}`;
+    }
+    const jid = `${number}@s.whatsapp.net`;
+    await sock.sendMessage(jid, { text: "Mensaje de prueba desde API (texto)" });
+    res.json({ success: true, message: "Mensaje de texto enviado" });
+  } catch (error) {
+    console.error("Error enviando mensaje de texto:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Arranca el servidor y conecta WhatsApp
+// Endpoint para enviar mensaje de imagen
+app.get('/api/whatsapp/send/image', async (req, res) => {
+  try {
+    const phone = req.query.phone;
+    if (!phone) {
+      return res.status(400).json({ error: "El parámetro phone es requerido" });
+    }
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
+    }
+    let number = phone;
+    if (!number.startsWith('521')) {
+      number = `521${number}`;
+    }
+    const jid = `${number}@s.whatsapp.net`;
+    // Se utiliza una URL de imagen de prueba
+    await sock.sendMessage(jid, { image: { url: "https://via.placeholder.com/150" } });
+    res.json({ success: true, message: "Mensaje de imagen enviado" });
+  } catch (error) {
+    console.error("Error enviando mensaje de imagen:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint para enviar mensaje de audio
+app.get('/api/whatsapp/send/audio', async (req, res) => {
+  try {
+    const phone = req.query.phone;
+    if (!phone) {
+      return res.status(400).json({ error: "El parámetro phone es requerido" });
+    }
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      return res.status(500).json({ error: "No hay conexión activa con WhatsApp" });
+    }
+    let number = phone;
+    if (!number.startsWith('521')) {
+      number = `521${number}`;
+    }
+    const jid = `${number}@s.whatsapp.net`;
+    await sock.sendMessage(jid, {
+      audio: { url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
+      mimetype: "audio/mp4",
+      fileName: "prueba.m4a",
+      ptt: true
+    });
+    res.json({ success: true, message: "Mensaje de audio enviado" });
+  } catch (error) {
+    console.error("Error enviando mensaje de audio:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Función para enviar mensajes según el tipo.
+ * Se ha incluido el caso "pdfChatGPT" que genera, guarda y envía el PDF.
+ */
+async function enviarMensaje(lead, mensaje) {
+  try {
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      console.error("No hay conexión activa con WhatsApp.");
+      return;
+    }
+    let phone = lead.telefono;
+    if (!phone.startsWith('521')) {
+      phone = `521${phone}`;
+    }
+    const jid = `${phone}@s.whatsapp.net`;
+    const contenidoFinal = mensaje.contenido; // Asumimos que aquí ya se han aplicado los placeholders
+
+    if (mensaje.type === "texto") {
+      await sock.sendMessage(jid, { text: contenidoFinal });
+    } else if (mensaje.type === "audio") {
+      try {
+        console.log(`Descargando audio desde: ${contenidoFinal} para el lead ${lead.id}`);
+        const response = await axios.get(contenidoFinal, { responseType: 'arraybuffer' });
+        const audioBuffer = Buffer.from(response.data, 'binary');
+        console.log(`Audio descargado. Tamaño: ${audioBuffer.length} bytes para el lead ${lead.id}`);
+        if (audioBuffer.length === 0) {
+          console.error(`Error: El archivo descargado está vacío para el lead ${lead.id}`);
+          return;
+        }
+        const audioMsg = {
+          audio: audioBuffer,
+          mimetype: 'audio/mp4', // o 'audio/m4a'
+          ptt: true
+        };
+        await sock.sendMessage(jid, audioMsg);
+      } catch (err) {
+        console.error("Error al descargar o enviar audio:", err);
+      }
+    } else if (mensaje.type === "imagen") {
+      await sock.sendMessage(jid, { image: { url: contenidoFinal } });
+    } else if (mensaje.type === "pdfChatGPT") {
+      await procesarMensajePDFChatGPT(lead);
+    }
+    console.log(`Mensaje de tipo "${mensaje.type}" enviado a ${lead.telefono}`);
+  } catch (error) {
+    console.error("Error al enviar mensaje:", error);
+  }
+}
+
+/**
+ * Función que procesa el mensaje de tipo pdfChatGPT:
+ * - Genera la estrategia y el PDF si aún no existe en el lead.
+ * - Envía el PDF por WhatsApp.
+ * - Actualiza el lead con el campo 'pdfEstrategia' y cambia la etiqueta a "planEnviado".
+ */
+async function procesarMensajePDFChatGPT(lead) {
+  try {
+    console.log(`Procesando PDF ChatGPT para el lead ${lead.id}`);
+
+    // Si el lead no tiene un PDF generado, lo creamos
+    if (!lead.pdfEstrategia) {
+      if (!lead.giro) {
+        console.error("El lead no contiene el campo 'giro'. Se asigna valor predeterminado 'general'.");
+        lead.giro = "general";
+      }
+      // Pasar el objeto completo lead a generarEstrategia
+      const strategyText = await generarEstrategia(lead);
+      if (!strategyText) {
+        console.error("No se pudo generar la estrategia.");
+        return;
+      }
+      // Genera el PDF usando el nuevo módulo generatePDF
+      const pdfFilePath = await generatePDF(lead, strategyText);
+      if (!pdfFilePath) {
+        console.error("No se generó el PDF, pdfFilePath es nulo.");
+        return;
+      }
+      console.log("PDF generado en:", pdfFilePath);
+      // Actualizar el lead con la ruta del PDF
+      await db.collection('leads').doc(lead.id).update({ pdfEstrategia: pdfFilePath });
+      lead.pdfEstrategia = pdfFilePath;
+    }
+
+    // Enviar el PDF por WhatsApp
+    const sock = getWhatsAppSock();
+    if (!sock) {
+      console.error("No hay conexión activa con WhatsApp.");
+      return;
+    }
+    let phone = lead.telefono;
+    if (!phone.startsWith('521')) {
+      phone = `521${phone}`;
+    }
+    const jid = `${phone}@s.whatsapp.net`;
+    const pdfBuffer = fs.readFileSync(lead.pdfEstrategia);
+    await sock.sendMessage(jid, {
+      document: pdfBuffer,
+      fileName: `Estrategia-${lead.nombre}.pdf`,
+      mimetype: "application/pdf"
+    });
+    console.log(`PDF de estrategia enviado a ${lead.telefono}`);
+
+    // Actualizar la etiqueta del lead a "planEnviado"
+    await db.collection('leads').doc(lead.id).update({ etiqueta: "planEnviado" });
+  } catch (err) {
+    console.error("Error procesando mensaje pdfChatGPT:", err);
+  }
+}
+
+/**
+ * Función que procesa las secuencias activas para cada lead.
+ * Recuerda que las secuencias son definidas en Firestore y cada mensaje tiene un delay.
+ */
+async function processSequences() {
+  console.log("Ejecutando scheduler de secuencias...");
+  try {
+    const leadsSnapshot = await db.collection('leads')
+      .where('secuenciasActivas', '!=', null)
+      .get();
+
+    leadsSnapshot.forEach(async (docSnap) => {
+      const lead = { id: docSnap.id, ...docSnap.data() };
+      if (!lead.secuenciasActivas || lead.secuenciasActivas.length === 0) return;
+      let actualizaciones = false;
+      for (let i = 0; i < lead.secuenciasActivas.length; i++) {
+        const seqActiva = lead.secuenciasActivas[i];
+        const secSnapshot = await db.collection('secuencias')
+          .where('trigger', '==', seqActiva.trigger)
+          .get();
+        if (secSnapshot.empty) continue;
+        const secuencia = secSnapshot.docs[0].data();
+        const mensajes = secuencia.messages;
+        if (seqActiva.index >= mensajes.length) {
+          lead.secuenciasActivas[i] = null;
+          actualizaciones = true;
+          continue;
+        }
+        const mensaje = mensajes[seqActiva.index];
+        const startTime = new Date(seqActiva.startTime);
+        const envioProgramado = new Date(startTime.getTime() + mensaje.delay * 60000);
+        if (Date.now() >= envioProgramado.getTime()) {
+          await enviarMensaje(lead, mensaje);
+          seqActiva.index += 1;
+          actualizaciones = true;
+        }
+      }
+      if (actualizaciones) {
+        lead.secuenciasActivas = lead.secuenciasActivas.filter(item => item !== null);
+        await db.collection('leads').doc(lead.id).update({
+          secuenciasActivas: lead.secuenciasActivas
+        });
+      }
+    });
+  } catch (error) {
+    console.error("Error en processSequences:", error);
+  }
+}
+
+cron.schedule('* * * * *', () => {
+  processSequences();
+});
+
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
-  connectToWhatsApp().catch(err =>
-    console.error("Error al conectar WhatsApp en startup:", err)
-  );
-
-  // Arranque inmediato de generación/envío de letras pendientes
-  generateLetras().catch(err =>
-    console.error("Error inicial en generateLetras:", err)
-  );
-  sendLetras().catch(err =>
-    console.error("Error inicial en sendLetras:", err)
-  );
-});
-
-// Scheduler: ejecuta las secuencias activas cada minuto
-cron.schedule('* * * * *', () => {
-  console.log('⏱️ processSequences:', new Date().toISOString());
-  processSequences().catch(err => console.error('Error en processSequences:', err));
-});
-
-// Genera letras pendientes cada minuto
-cron.schedule('* * * * *', () => {
-  console.log('🖋️ generateLetras:', new Date().toISOString());
-  generateLetras().catch(err => console.error('Error en generateLetras:', err));
-});
-
-// Envía letras pendientes cada minuto
-cron.schedule('* * * * *', () => {
-  console.log('📨 sendLetras:', new Date().toISOString());
-  sendLetras().catch(err => console.error('Error en sendLetras:', err));
+  // Conectar a WhatsApp al iniciar el servidor
+  connectToWhatsApp().catch(err => console.error("Error al conectar WhatsApp en startup:", err));
 });
